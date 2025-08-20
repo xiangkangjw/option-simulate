@@ -155,7 +155,20 @@ class YahooFinanceProvider(DataProvider):
                         print(f"Expiration {expiration} not available for {symbol}")
                         return []
                 else:
-                    expirations = available_expirations[:3]  # Get first 3 expirations
+                    # Filter expirations to target 21-90 DTE range for tail hedging
+                    from datetime import datetime as dt, date
+                    today = date.today()
+                    filtered_expirations = []
+                    for exp_str in available_expirations:
+                        try:
+                            exp_date = dt.strptime(exp_str, '%Y-%m-%d').date()
+                            dte = (exp_date - today).days
+                            if 21 <= dte <= 90:  # Target range for tail hedging
+                                filtered_expirations.append(exp_str)
+                        except ValueError:
+                            continue
+                    
+                    expirations = filtered_expirations[:5] if filtered_expirations else available_expirations[:3]
                     
             except requests.exceptions.JSONDecodeError as json_error:
                 print(f"JSON decode error getting expirations for {symbol}: {json_error}")
@@ -376,18 +389,92 @@ class MarketDataManager:
         """Get put options suitable for tail hedging."""
         contracts = self.get_options_chain(symbol)
         
+        print(f"\n=== Tail Hedge Analysis for {symbol} ===")
+        print(f"Current price: ${current_price:.2f}")
+        print(f"OTM percentage: {otm_percentage:.1%}")
+        
         # Filter for puts that are out-of-the-money
         target_strike = current_price * (1 - otm_percentage)
+        print(f"Target strike (max): ${target_strike:.2f}")
+        
+        print(f"\nTotal contracts retrieved: {len(contracts)}")
+        
+        # Count contracts by type
+        put_count = sum(1 for c in contracts if c.option_type == 'put')
+        call_count = sum(1 for c in contracts if c.option_type == 'call')
+        print(f"Put contracts: {put_count}")
+        print(f"Call contracts: {call_count}")
+        
+        if put_count == 0:
+            print("❌ No put options found in options chain!")
+            return []
+        
+        # Analyze put options in detail
+        puts = [c for c in contracts if c.option_type == 'put']
+        print(f"\n=== Analyzing {len(puts)} Put Options ===")
+        
+        # Show strike price distribution
+        strikes = [c.strike for c in puts if c.strike > 0]
+        if strikes:
+            print(f"Strike range: ${min(strikes):.2f} - ${max(strikes):.2f}")
+            strikes_below_target = [s for s in strikes if s <= target_strike]
+            print(f"Strikes <= target (${target_strike:.2f}): {len(strikes_below_target)} out of {len(strikes)}")
         
         candidates = []
-        for contract in contracts:
-            if (contract.option_type == 'put' and 
-                contract.strike <= target_strike and
-                contract.strike > 0 and  # Ensure valid strike price
-                (contract.bid > 0 or contract.ask > 0 or contract.last > 0)):  # At least one price available
-                candidates.append(contract)
+        filtered_out = {"strike_too_high": 0, "no_strike": 0, "no_price": 0}
         
-        # Sort by expiration date and liquidity
-        candidates.sort(key=lambda x: (x.expiration, -x.volume))
+        for contract in contracts:
+            if contract.option_type != 'put':
+                continue
+                
+            # Check strike price validity
+            if contract.strike <= 0:
+                filtered_out["no_strike"] += 1
+                continue
+                
+            # Check if strike is within target range
+            if contract.strike > target_strike:
+                filtered_out["strike_too_high"] += 1
+                continue
+                
+            # Check if any price is available
+            has_price = (contract.bid > 0 or contract.ask > 0 or contract.last > 0)
+            if not has_price:
+                filtered_out["no_price"] += 1
+                continue
+                
+            candidates.append(contract)
+        
+        # Print filtering results
+        print(f"\n=== Filtering Results ===")
+        print(f"✅ Candidates found: {len(candidates)}")
+        print(f"❌ Filtered out - Strike too high (>${target_strike:.2f}): {filtered_out['strike_too_high']}")
+        print(f"❌ Filtered out - No valid strike price: {filtered_out['no_strike']}")
+        print(f"❌ Filtered out - No price data: {filtered_out['no_price']}")
+        
+        if candidates:
+            print(f"\n=== Top 5 Candidates ===")
+            # Sort by expiration date and liquidity
+            candidates.sort(key=lambda x: (x.expiration, -x.volume))
+            
+            for i, contract in enumerate(candidates[:5]):
+                dte = (contract.expiration - date.today()).days
+                print(f"{i+1}. ${contract.strike:.0f} exp {contract.expiration} (DTE:{dte}) "
+                      f"bid:${contract.bid:.2f} ask:${contract.ask:.2f} last:${contract.last:.2f} "
+                      f"vol:{contract.volume} OI:{contract.open_interest}")
+        else:
+            print("\n❌ No suitable tail hedging options found after filtering")
+            
+            # Additional diagnostics
+            if put_count > 0:
+                print(f"\n=== Diagnostic Information ===")
+                sample_puts = puts[:5]  # Show first 5 puts for debugging
+                for i, put in enumerate(sample_puts):
+                    dte = (put.expiration - date.today()).days
+                    meets_strike = put.strike <= target_strike
+                    has_price = (put.bid > 0 or put.ask > 0 or put.last > 0)
+                    print(f"Put {i+1}: ${put.strike:.0f} exp {put.expiration} (DTE:{dte}) "
+                          f"strike_ok:{meets_strike} price_ok:{has_price} "
+                          f"bid:${put.bid:.2f} ask:${put.ask:.2f} last:${put.last:.2f}")
         
         return candidates
