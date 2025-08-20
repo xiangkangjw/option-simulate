@@ -6,8 +6,31 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, date, timedelta
 import pandas as pd
+import numpy as np
+import time
+import random
 from ..config import settings
 from ..models.options import OptionContract
+
+
+def safe_float(value, default=0.0):
+    """Safely convert value to float, handling NaN and None."""
+    try:
+        if value is None or pd.isna(value):
+            return default
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_int(value, default=0):
+    """Safely convert value to int, handling NaN and None."""
+    try:
+        if value is None or pd.isna(value):
+            return default
+        return int(float(value))  # Convert to float first to handle string numbers
+    except (ValueError, TypeError):
+        return default
 
 
 class DataProvider(ABC):
@@ -34,13 +57,78 @@ class DataProvider(ABC):
 class YahooFinanceProvider(DataProvider):
     """Yahoo Finance data provider using yfinance library."""
     
+    def __init__(self):
+        self.last_request_time = 0
+        self.min_request_interval = 1.0  # Minimum 1 second between requests
+    
+    def _rate_limit(self):
+        """Implement rate limiting to avoid 429 errors."""
+        current_time = time.time()
+        time_since_last_request = current_time - self.last_request_time
+        
+        if time_since_last_request < self.min_request_interval:
+            sleep_time = self.min_request_interval - time_since_last_request
+            # Add small random delay to avoid synchronized requests
+            sleep_time += random.uniform(0.1, 0.5)
+            time.sleep(sleep_time)
+        
+        self.last_request_time = time.time()
+    
     def get_stock_price(self, symbol: str) -> float:
         """Get current stock price from Yahoo Finance."""
+        self._rate_limit()
+        
         try:
             ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="1d")
-            if not hist.empty:
-                return float(hist['Close'].iloc[-1])
+            
+            # Try multiple approaches for getting current price
+            # 1. First try fast_info (most reliable with new yfinance version)
+            try:
+                fast_info = ticker.fast_info
+                if hasattr(fast_info, 'last_price') and fast_info.last_price:
+                    return float(fast_info.last_price)
+            except Exception as fast_error:
+                print(f"Fast info method failed for {symbol}: {fast_error}")
+            
+            # 2. Fallback to ticker.info
+            try:
+                info = ticker.info
+                if 'regularMarketPrice' in info and info['regularMarketPrice']:
+                    return float(info['regularMarketPrice'])
+                elif 'previousClose' in info and info['previousClose']:
+                    return float(info['previousClose'])
+            except Exception as info_error:
+                print(f"Info method failed for {symbol}: {info_error}")
+            
+            # 3. Try yf.download as fallback
+            try:
+                data = yf.download(symbol, period="1d", interval="1d", progress=False, auto_adjust=True)
+                if not data.empty:
+                    return float(data['Close'].iloc[-1])
+            except Exception as download_error:
+                print(f"Download method failed for {symbol}: {download_error}")
+            
+            # 4. Last resort - try historical data
+            try:
+                hist = ticker.history(period="5d")
+                if not hist.empty:
+                    return float(hist['Close'].iloc[-1])
+            except Exception as hist_error:
+                print(f"History method failed for {symbol}: {hist_error}")
+            
+            return 0.0
+            
+        except requests.exceptions.HTTPError as http_error:
+            if "429" in str(http_error):
+                print(f"Rate limited for {symbol}. Consider using a longer delay between requests.")
+                # Exponential backoff for rate limiting
+                time.sleep(random.uniform(2, 5))
+                return 0.0
+            else:
+                print(f"HTTP error fetching stock price for {symbol}: {http_error}")
+                return 0.0
+        except requests.exceptions.JSONDecodeError as json_error:
+            print(f"JSON decode error for {symbol} (Yahoo may be rate limiting): {json_error}")
             return 0.0
         except Exception as e:
             print(f"Error fetching stock price for {symbol}: {e}")
@@ -48,59 +136,100 @@ class YahooFinanceProvider(DataProvider):
     
     def get_options_chain(self, symbol: str, expiration: str = None) -> List[OptionContract]:
         """Get options chain from Yahoo Finance."""
+        self._rate_limit()
+        
         try:
             ticker = yf.Ticker(symbol)
             
-            # Get available expiration dates
-            if expiration:
-                expirations = [expiration]
-            else:
-                expirations = ticker.options[:3]  # Get first 3 expirations
+            # Get available expiration dates with error handling
+            try:
+                available_expirations = ticker.options
+                if not available_expirations:
+                    print(f"No options available for {symbol}")
+                    return []
+                
+                if expiration:
+                    if expiration in available_expirations:
+                        expirations = [expiration]
+                    else:
+                        print(f"Expiration {expiration} not available for {symbol}")
+                        return []
+                else:
+                    expirations = available_expirations[:3]  # Get first 3 expirations
+                    
+            except requests.exceptions.JSONDecodeError as json_error:
+                print(f"JSON decode error getting expirations for {symbol}: {json_error}")
+                return []
+            except Exception as exp_error:
+                print(f"Error getting option expirations for {symbol}: {exp_error}")
+                return []
             
             contracts = []
             
             for exp_date in expirations:
                 try:
+                    # Add rate limiting between expiration date requests
+                    if len(contracts) > 0:  # Only sleep after first request
+                        time.sleep(0.5)
+                    
                     chain = ticker.option_chain(exp_date)
                     
                     # Process puts (primary focus for tail hedging)
                     for _, put in chain.puts.iterrows():
-                        contract = OptionContract(
-                            symbol=put.get('contractSymbol', ''),
-                            underlying=symbol,
-                            strike=float(put.get('strike', 0)),
-                            expiration=datetime.strptime(exp_date, '%Y-%m-%d').date(),
-                            option_type='put',
-                            bid=float(put.get('bid', 0)),
-                            ask=float(put.get('ask', 0)),
-                            last=float(put.get('lastPrice', 0)),
-                            volume=int(put.get('volume', 0)),
-                            open_interest=int(put.get('openInterest', 0))
-                        )
-                        contracts.append(contract)
+                        try:
+                            contract = OptionContract(
+                                symbol=put.get('contractSymbol', ''),
+                                underlying=symbol,
+                                strike=safe_float(put.get('strike'), 0),
+                                expiration=datetime.strptime(exp_date, '%Y-%m-%d').date(),
+                                option_type='put',
+                                bid=safe_float(put.get('bid'), 0),
+                                ask=safe_float(put.get('ask'), 0),
+                                last=safe_float(put.get('lastPrice'), 0),
+                                volume=safe_int(put.get('volume'), 0),
+                                open_interest=safe_int(put.get('openInterest'), 0)
+                            )
+                            contracts.append(contract)
+                        except Exception as contract_error:
+                            print(f"Error creating put contract for {symbol}: {contract_error}")
+                            continue
                     
                     # Also include calls for completeness
                     for _, call in chain.calls.iterrows():
-                        contract = OptionContract(
-                            symbol=call.get('contractSymbol', ''),
-                            underlying=symbol,
-                            strike=float(call.get('strike', 0)),
-                            expiration=datetime.strptime(exp_date, '%Y-%m-%d').date(),
-                            option_type='call',
-                            bid=float(call.get('bid', 0)),
-                            ask=float(call.get('ask', 0)),
-                            last=float(call.get('lastPrice', 0)),
-                            volume=int(call.get('volume', 0)),
-                            open_interest=int(call.get('openInterest', 0))
-                        )
-                        contracts.append(contract)
+                        try:
+                            contract = OptionContract(
+                                symbol=call.get('contractSymbol', ''),
+                                underlying=symbol,
+                                strike=safe_float(call.get('strike'), 0),
+                                expiration=datetime.strptime(exp_date, '%Y-%m-%d').date(),
+                                option_type='call',
+                                bid=safe_float(call.get('bid'), 0),
+                                ask=safe_float(call.get('ask'), 0),
+                                last=safe_float(call.get('lastPrice'), 0),
+                                volume=safe_int(call.get('volume'), 0),
+                                open_interest=safe_int(call.get('openInterest'), 0)
+                            )
+                            contracts.append(contract)
+                        except Exception as contract_error:
+                            print(f"Error creating call contract for {symbol}: {contract_error}")
+                            continue
                         
+                except requests.exceptions.JSONDecodeError as json_error:
+                    print(f"JSON decode error processing expiration {exp_date} for {symbol}: {json_error}")
+                    continue
                 except Exception as e:
                     print(f"Error processing expiration {exp_date}: {e}")
                     continue
             
             return contracts
             
+        except requests.exceptions.HTTPError as http_error:
+            if "429" in str(http_error):
+                print(f"Rate limited getting options for {symbol}. Consider using a longer delay.")
+                time.sleep(random.uniform(3, 6))
+            else:
+                print(f"HTTP error fetching options chain for {symbol}: {http_error}")
+            return []
         except Exception as e:
             print(f"Error fetching options chain for {symbol}: {e}")
             return []
@@ -254,8 +383,8 @@ class MarketDataManager:
         for contract in contracts:
             if (contract.option_type == 'put' and 
                 contract.strike <= target_strike and
-                contract.bid > 0 and
-                contract.volume > 0):
+                contract.strike > 0 and  # Ensure valid strike price
+                (contract.bid > 0 or contract.ask > 0 or contract.last > 0)):  # At least one price available
                 candidates.append(contract)
         
         # Sort by expiration date and liquidity
