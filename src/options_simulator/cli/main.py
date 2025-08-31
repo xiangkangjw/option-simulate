@@ -28,6 +28,12 @@ def cli():
     """
     pass
 
+# Import the hedge comparison command
+from .hedge_compare import hedge_compare
+
+# Add the hedge comparison command to the CLI group
+cli.add_command(hedge_compare)
+
 
 @cli.command()
 @click.option('--portfolio-value', '-p', default=100000, type=float, 

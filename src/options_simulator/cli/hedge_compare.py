@@ -1,0 +1,557 @@
+"""
+CLI command for SPX hedging strategy comparison.
+
+This module provides the command-line interface for comparing different
+tail hedging strategies with regime-aware analysis and exit optimization.
+"""
+
+import click
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Optional
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich.progress import track
+from datetime import datetime
+import json
+import csv
+import logging
+
+from ..analysis.hedge_comparison import HedgeComparisonEngine, HedgingStrategy
+from ..analysis.volatility_regime import VolatilityRegime
+from ..analysis.exit_strategy import ExitTrigger, ExitTriggerType
+from ..config import EnhancedHedgingConfig
+
+logger = logging.getLogger(__name__)
+console = Console()
+
+
+@click.command()
+@click.option('--portfolio-value', type=int, default=100000, 
+              help='Portfolio value to hedge')
+@click.option('--timeframes', type=str, default="2M,3M,6M",
+              help='Comma-separated expiration periods (e.g., "2M,3M,6M")')
+@click.option('--otm-percentages', type=str, default="0.15,0.18,0.20",
+              help='Comma-separated OTM percentages to analyze')
+@click.option('--symbols', type=str, default="SPY",
+              help='Underlying symbols (default: SPY)')
+@click.option('--volatility-regime', type=click.Choice(['low', 'medium', 'high', 'extreme', 'auto']),
+              default='auto', help='Force specific regime analysis')
+@click.option('--enable-dynamic-exits/--no-dynamic-exits', default=True,
+              help='Enable profit-taking analysis')
+@click.option('--exit-triggers', type=str, default="vix_spike,portfolio_protection,profit_target",
+              help='Exit trigger types (vix_spike,portfolio_protection,profit_target,time_decay)')
+@click.option('--scenario-analysis/--no-scenario-analysis', default=False,
+              help='Include historical scenario testing with vol dynamics')
+@click.option('--show-regime-greeks/--no-regime-greeks', default=True,
+              help='Display regime-adjusted Greeks comparison')
+@click.option('--jump-diffusion-pricing/--no-jump-diffusion', default=True,
+              help='Use jump-diffusion models for tail events')
+@click.option('--export-format', type=click.Choice(['json', 'csv', 'html']),
+              help='Export format')
+@click.option('--output', type=str, help='Output file path')
+@click.option('--hybrid-analysis/--no-hybrid-analysis', default=True,
+              help='Show dynamic hybrid strategy recommendations')
+@click.option('--stress-test-depth', type=int, default=6,
+              help='Historical stress test depth (default: 6 scenarios)')
+@click.option('--vix-level', type=float, help='Override current VIX level for testing')
+@click.option('--spy-price', type=float, help='Override current SPY price for testing')
+def hedge_compare(portfolio_value: int,
+                 timeframes: str,
+                 otm_percentages: str, 
+                 symbols: str,
+                 volatility_regime: str,
+                 enable_dynamic_exits: bool,
+                 exit_triggers: str,
+                 scenario_analysis: bool,
+                 show_regime_greeks: bool,
+                 jump_diffusion_pricing: bool,
+                 export_format: Optional[str],
+                 output: Optional[str],
+                 hybrid_analysis: bool,
+                 stress_test_depth: int,
+                 vix_level: Optional[float],
+                 spy_price: Optional[float]):
+    """
+    Compare SPX put option hedging strategies with regime-aware analysis.
+    
+    This command provides comprehensive analysis of tail hedging strategies,
+    including volatility regime impact, exit strategy optimization, and
+    jump-diffusion pricing for accurate black swan risk assessment.
+    """
+    
+    console.print(Panel.fit(
+        "[bold blue]SPX Hedging Strategy Comparison[/bold blue]\n"
+        "Enhanced with volatility regime analysis and dynamic exit strategies",
+        title="🛡️ Tail Hedging Analyzer"
+    ))
+    
+    try:
+        # Parse input parameters
+        timeframe_list = _parse_timeframes(timeframes)
+        otm_list = _parse_otm_percentages(otm_percentages)
+        exit_trigger_list = _parse_exit_triggers(exit_triggers)
+        
+        # Create market conditions (use mock data or provided overrides)
+        market_conditions = _create_market_conditions(vix_level, spy_price)
+        
+        # Initialize enhanced configuration
+        config = EnhancedHedgingConfig()
+        
+        # Create comparison engine
+        engine = HedgeComparisonEngine(config)
+        
+        console.print(f"📊 Analyzing {len(timeframe_list)} timeframes × {len(otm_list)} OTM levels")
+        console.print(f"💼 Portfolio Value: ${portfolio_value:,}")
+        console.print(f"📈 Current Market: VIX {market_conditions['vix']:.1f}, SPY ${market_conditions['spy_price']:.2f}")
+        console.print()
+        
+        # Create strategy combinations
+        strategies = []
+        for timeframe_months in timeframe_list:
+            for otm_pct in otm_list:
+                strategy = _create_hedging_strategy(
+                    expiration_months=timeframe_months,
+                    otm_percentage=otm_pct,
+                    enable_dynamic_exits=enable_dynamic_exits,
+                    exit_trigger_list=exit_trigger_list,
+                    config=config
+                )
+                strategies.append(strategy)
+        
+        console.print(f"🔍 Created {len(strategies)} strategy combinations")
+        
+        # Run comparison analysis
+        with console.status("[bold green]Running comprehensive analysis..."):
+            comparison_results = engine.compare_strategies(
+                strategies=strategies,
+                portfolio_value=portfolio_value,
+                current_market_conditions=market_conditions,
+                historical_data=_get_sample_historical_data() if scenario_analysis else None
+            )
+        
+        # Display results
+        _display_results(
+            comparison_results=comparison_results,
+            show_regime_greeks=show_regime_greeks,
+            jump_diffusion_pricing=jump_diffusion_pricing,
+            hybrid_analysis=hybrid_analysis
+        )
+        
+        # Export results if requested
+        if export_format and output:
+            _export_results(comparison_results, export_format, output)
+            console.print(f"✅ Results exported to {output}")
+        
+        console.print("\n🎯 Analysis completed successfully!")
+        
+    except Exception as e:
+        console.print(f"❌ Error during analysis: {str(e)}", style="red")
+        logger.exception("Hedge comparison failed")
+        raise click.ClickException(f"Analysis failed: {str(e)}")
+
+
+def _parse_timeframes(timeframes_str: str) -> List[int]:
+    """Parse timeframe string into months."""
+    timeframes = []
+    for tf in timeframes_str.split(','):
+        tf = tf.strip().upper()
+        if tf.endswith('M'):
+            months = int(tf[:-1])
+            timeframes.append(months)
+        else:
+            try:
+                months = int(tf)
+                timeframes.append(months)
+            except ValueError:
+                raise click.BadParameter(f"Invalid timeframe: {tf}")
+    
+    return sorted(timeframes)
+
+
+def _parse_otm_percentages(otm_str: str) -> List[float]:
+    """Parse OTM percentage string."""
+    otm_percentages = []
+    for otm in otm_str.split(','):
+        otm = otm.strip()
+        try:
+            if otm.endswith('%'):
+                pct = float(otm[:-1]) / 100
+            else:
+                pct = float(otm)
+            otm_percentages.append(pct)
+        except ValueError:
+            raise click.BadParameter(f"Invalid OTM percentage: {otm}")
+    
+    return sorted(otm_percentages)
+
+
+def _parse_exit_triggers(triggers_str: str) -> List[ExitTriggerType]:
+    """Parse exit trigger string."""
+    trigger_mapping = {
+        'vix_spike': ExitTriggerType.VIX_SPIKE,
+        'portfolio_protection': ExitTriggerType.PORTFOLIO_PROTECTION,
+        'profit_target': ExitTriggerType.PROFIT_TARGET,
+        'time_decay': ExitTriggerType.TIME_DECAY,
+        'correlation_breakdown': ExitTriggerType.CORRELATION_BREAKDOWN,
+        'liquidity_stress': ExitTriggerType.LIQUIDITY_STRESS
+    }
+    
+    triggers = []
+    for trigger in triggers_str.split(','):
+        trigger = trigger.strip().lower()
+        if trigger in trigger_mapping:
+            triggers.append(trigger_mapping[trigger])
+        else:
+            console.print(f"Warning: Unknown exit trigger '{trigger}' ignored", style="yellow")
+    
+    return triggers
+
+
+def _create_market_conditions(vix_override: Optional[float] = None,
+                            spy_override: Optional[float] = None) -> Dict[str, float]:
+    """Create market conditions (mock data for demonstration)."""
+    return {
+        'vix': vix_override or 22.5,
+        'spy_price': spy_override or 420.0,
+        'risk_free_rate': 0.05,
+        'average_correlation': 0.6,
+        'volume_ratio': 1.0,
+        'bid_ask_spread_ratio': 1.2,
+        'portfolio_return': 0.0  # Assume neutral for new analysis
+    }
+
+
+def _create_hedging_strategy(expiration_months: int,
+                           otm_percentage: float,
+                           enable_dynamic_exits: bool,
+                           exit_trigger_list: List[ExitTriggerType],
+                           config: EnhancedHedgingConfig) -> HedgingStrategy:
+    """Create a hedging strategy with the specified parameters."""
+    
+    # Create volatility regime adjustments
+    regime_adjustments = {
+        'low': 1.0,
+        'medium': 1.2,
+        'high': 1.5,
+        'extreme': 2.0
+    }
+    
+    # Create exit triggers if dynamic exits are enabled
+    exit_triggers = []
+    if enable_dynamic_exits:
+        for trigger_type in exit_trigger_list:
+            if trigger_type == ExitTriggerType.VIX_SPIKE:
+                exit_triggers.extend([
+                    ExitTrigger(ExitTriggerType.VIX_SPIKE, 30, 0.25, priority=2),
+                    ExitTrigger(ExitTriggerType.VIX_SPIKE, 45, 0.50, priority=3),
+                    ExitTrigger(ExitTriggerType.VIX_SPIKE, 60, 0.75, priority=4),
+                ])
+            elif trigger_type == ExitTriggerType.PROFIT_TARGET:
+                exit_triggers.extend([
+                    ExitTrigger(ExitTriggerType.PROFIT_TARGET, 2.0, 0.25, priority=1),
+                    ExitTrigger(ExitTriggerType.PROFIT_TARGET, 5.0, 0.50, priority=2),
+                    ExitTrigger(ExitTriggerType.PROFIT_TARGET, 10.0, 0.75, priority=3),
+                ])
+            elif trigger_type == ExitTriggerType.PORTFOLIO_PROTECTION:
+                exit_triggers.extend([
+                    ExitTrigger(ExitTriggerType.PORTFOLIO_PROTECTION, 0.05, 0.30, priority=2),
+                    ExitTrigger(ExitTriggerType.PORTFOLIO_PROTECTION, 0.10, 0.60, priority=3),
+                ])
+            # Add other trigger types as needed
+    
+    return HedgingStrategy(
+        expiration_months=expiration_months,
+        otm_percentage=otm_percentage,
+        rolling_threshold_days=config.default_rolling_threshold,
+        volatility_regime_adjustments=regime_adjustments,
+        exit_triggers=exit_triggers
+    )
+
+
+def _get_sample_historical_data() -> pd.DataFrame:
+    """Create sample historical data for scenario analysis."""
+    # In a real implementation, this would load actual historical data
+    dates = pd.date_range('2020-01-01', '2023-12-31', freq='D')
+    np.random.seed(42)  # For reproducible results
+    
+    # Simulate VIX and SPY data with some correlation
+    vix_data = np.random.lognormal(mean=np.log(20), sigma=0.6, size=len(dates))
+    vix_data = np.clip(vix_data, 10, 100)  # Realistic VIX range
+    
+    # SPY returns inversely correlated with VIX spikes
+    spy_returns = np.random.normal(0.0008, 0.012, size=len(dates))  # Daily returns
+    for i in range(1, len(vix_data)):
+        if vix_data[i] > 40:  # High VIX
+            spy_returns[i] = np.random.normal(-0.02, 0.03)  # Negative returns during stress
+    
+    return pd.DataFrame({
+        'vix': vix_data,
+        'spy_return': spy_returns
+    }, index=dates)
+
+
+def _display_results(comparison_results: Dict,
+                    show_regime_greeks: bool,
+                    jump_diffusion_pricing: bool, 
+                    hybrid_analysis: bool):
+    """Display comprehensive analysis results."""
+    
+    # Current regime and conditions
+    current_regime = comparison_results.get('current_volatility_regime', 'unknown')
+    console.print(Panel(
+        f"[bold]Current Volatility Regime:[/bold] {current_regime.upper()}\n"
+        f"[bold]Analysis Date:[/bold] {comparison_results.get('analysis_timestamp', 'N/A')}"
+    ))
+    
+    # Strategy rankings table
+    _display_strategy_rankings(comparison_results)
+    
+    # Detailed strategy analysis
+    if show_regime_greeks:
+        _display_greeks_analysis(comparison_results)
+    
+    # Jump-diffusion insights
+    if jump_diffusion_pricing:
+        _display_jump_diffusion_insights(comparison_results)
+    
+    # Hybrid strategy recommendations
+    if hybrid_analysis:
+        _display_hybrid_recommendations(comparison_results)
+    
+    # Recommendations and warnings
+    _display_recommendations_and_warnings(comparison_results)
+
+
+def _display_strategy_rankings(comparison_results: Dict):
+    """Display strategy rankings table."""
+    rel_comparisons = comparison_results.get('relative_comparisons', {})
+    
+    if 'cost_efficiency_ranking' in rel_comparisons:
+        console.print("\n📊 [bold blue]Strategy Rankings[/bold blue]")
+        
+        # Cost efficiency table
+        cost_table = Table(title="Cost Efficiency Ranking", show_header=True)
+        cost_table.add_column("Rank", style="bold")
+        cost_table.add_column("Strategy", style="cyan")
+        cost_table.add_column("Annual Cost", justify="right")
+        cost_table.add_column("% of Portfolio", justify="right")
+        
+        for item in rel_comparisons['cost_efficiency_ranking']:
+            cost_table.add_row(
+                str(item['rank']),
+                item['strategy_name'],
+                f"${item['annual_cost']:,.0f}",
+                f"{item['cost_as_percentage']:.2%}"
+            )
+        
+        console.print(cost_table)
+        console.print()
+
+
+def _display_greeks_analysis(comparison_results: Dict):
+    """Display regime-adjusted Greeks analysis."""
+    console.print("📈 [bold blue]Regime-Adjusted Greeks Analysis[/bold blue]")
+    
+    strategy_analysis = comparison_results.get('strategy_analysis', {})
+    if not strategy_analysis:
+        console.print("No Greeks data available")
+        return
+    
+    greeks_table = Table(show_header=True)
+    greeks_table.add_column("Strategy", style="cyan")
+    greeks_table.add_column("Delta", justify="right")
+    greeks_table.add_column("Gamma", justify="right")
+    greeks_table.add_column("Theta", justify="right")
+    greeks_table.add_column("Vega", justify="right")
+    
+    for strategy_id, analysis in strategy_analysis.items():
+        greeks = analysis.get('greeks_analysis', {})
+        if greeks:
+            greeks_table.add_row(
+                strategy_id,
+                f"{greeks.get('delta', 0):.3f}",
+                f"{greeks.get('gamma', 0):.4f}",
+                f"{greeks.get('theta', 0):.2f}",
+                f"{greeks.get('vega', 0):.3f}"
+            )
+    
+    console.print(greeks_table)
+    console.print()
+
+
+def _display_jump_diffusion_insights(comparison_results: Dict):
+    """Display jump-diffusion pricing insights."""
+    console.print("🎯 [bold blue]Jump-Diffusion Pricing Insights[/bold blue]")
+    
+    strategy_analysis = comparison_results.get('strategy_analysis', {})
+    
+    jd_table = Table(show_header=True)
+    jd_table.add_column("Strategy", style="cyan")
+    jd_table.add_column("JD Price", justify="right")
+    jd_table.add_column("BS Price", justify="right")
+    jd_table.add_column("Jump Premium", justify="right", style="green")
+    
+    for strategy_id, analysis in strategy_analysis.items():
+        pricing = analysis.get('pricing_analysis', {})
+        if pricing:
+            jd_table.add_row(
+                strategy_id,
+                f"${pricing.get('jump_diffusion_price', 0):.2f}",
+                f"${pricing.get('black_scholes_price', 0):.2f}",
+                f"{pricing.get('jump_risk_premium', 0):.1%}"
+            )
+    
+    console.print(jd_table)
+    console.print()
+
+
+def _display_hybrid_recommendations(comparison_results: Dict):
+    """Display hybrid strategy recommendations."""
+    recommendations = comparison_results.get('recommendations', {})
+    hybrid_suggestion = recommendations.get('hybrid_strategy_suggestion', {})
+    
+    if hybrid_suggestion and 'error' not in hybrid_suggestion:
+        console.print("🔀 [bold blue]Hybrid Strategy Recommendation[/bold blue]")
+        
+        allocation = hybrid_suggestion.get('hybrid_allocation', {})
+        metrics = hybrid_suggestion.get('hybrid_metrics', {})
+        
+        hybrid_panel = Panel(
+            f"[bold]Allocation:[/bold]\n"
+            f"• {allocation.get('short_term_strategy', 'N/A')}: {allocation.get('short_term_weight', 0):.0%}\n"
+            f"• {allocation.get('long_term_strategy', 'N/A')}: {allocation.get('long_term_weight', 0):.0%}\n\n"
+            f"[bold]Expected Performance:[/bold]\n"
+            f"• Blended Annual Cost: ${metrics.get('blended_annual_cost', 0):,.0f}\n"
+            f"• Blended Protection Ratio: {metrics.get('blended_protection_ratio', 0):.1f}x\n\n"
+            f"[bold]Rationale:[/bold] {hybrid_suggestion.get('rationale', 'N/A')}",
+            title="Hybrid Strategy",
+            border_style="green"
+        )
+        
+        console.print(hybrid_panel)
+        console.print()
+
+
+def _display_recommendations_and_warnings(comparison_results: Dict):
+    """Display recommendations and risk warnings."""
+    recommendations = comparison_results.get('recommendations', {})
+    
+    # Primary recommendation
+    primary_rec = recommendations.get('primary_recommendation', {})
+    if primary_rec:
+        console.print("🎯 [bold green]Primary Recommendation[/bold green]")
+        rec_panel = Panel(
+            f"[bold]Recommended Strategy:[/bold] {primary_rec.get('recommended_strategy', 'N/A')}\n"
+            f"[bold]Confidence:[/bold] {primary_rec.get('confidence_score', 0):.0%}\n"
+            f"[bold]Key Advantages:[/bold]\n" +
+            "\n".join(f"• {adv}" for adv in primary_rec.get('key_advantages', [])),
+            border_style="green"
+        )
+        console.print(rec_panel)
+        console.print()
+    
+    # Risk warnings
+    risk_warnings = recommendations.get('risk_warnings', [])
+    if risk_warnings:
+        console.print("⚠️  [bold red]Risk Warnings[/bold red]")
+        for warning in risk_warnings:
+            console.print(f"• {warning}", style="yellow")
+        console.print()
+    
+    # Action items
+    action_items = recommendations.get('action_items', [])
+    if action_items:
+        console.print("📋 [bold blue]Recommended Actions[/bold blue]")
+        for i, action in enumerate(action_items, 1):
+            console.print(f"{i}. {action}")
+        console.print()
+
+
+def _export_results(comparison_results: Dict, export_format: str, output_path: str):
+    """Export results to specified format."""
+    try:
+        if export_format == 'json':
+            with open(output_path, 'w') as f:
+                json.dump(comparison_results, f, indent=2, default=str)
+        
+        elif export_format == 'csv':
+            # Create a simplified CSV with key metrics
+            _export_to_csv(comparison_results, output_path)
+        
+        elif export_format == 'html':
+            # Create an HTML report
+            _export_to_html(comparison_results, output_path)
+        
+    except Exception as e:
+        console.print(f"Export failed: {str(e)}", style="red")
+        raise
+
+
+def _export_to_csv(comparison_results: Dict, output_path: str):
+    """Export key metrics to CSV format."""
+    strategy_analysis = comparison_results.get('strategy_analysis', {})
+    
+    with open(output_path, 'w', newline='') as csvfile:
+        fieldnames = [
+            'strategy_id', 'annual_cost', 'cost_percentage', 
+            'jump_risk_premium', 'protection_ratio', 'delta', 'gamma', 'theta', 'vega'
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for strategy_id, analysis in strategy_analysis.items():
+            pricing = analysis.get('pricing_analysis', {})
+            greeks = analysis.get('greeks_analysis', {})
+            performance = analysis.get('performance_metrics', {})
+            
+            writer.writerow({
+                'strategy_id': strategy_id,
+                'annual_cost': pricing.get('annual_cost', 0),
+                'cost_percentage': pricing.get('cost_as_percentage', 0),
+                'jump_risk_premium': pricing.get('jump_risk_premium', 0),
+                'protection_ratio': performance.get('protection_ratio', 0),
+                'delta': greeks.get('delta', 0),
+                'gamma': greeks.get('gamma', 0),
+                'theta': greeks.get('theta', 0),
+                'vega': greeks.get('vega', 0)
+            })
+
+
+def _export_to_html(comparison_results: Dict, output_path: str):
+    """Export results to HTML format."""
+    # Create a basic HTML report
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SPX Hedging Strategy Comparison</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background-color: #f2f2f2; }}
+            .warning {{ color: red; font-weight: bold; }}
+            .recommendation {{ color: green; font-weight: bold; }}
+        </style>
+    </head>
+    <body>
+        <h1>SPX Hedging Strategy Comparison Report</h1>
+        <p>Generated: {comparison_results.get('analysis_timestamp', 'N/A')}</p>
+        <p>Portfolio Value: ${comparison_results.get('portfolio_value', 0):,}</p>
+        <p>Current Volatility Regime: {comparison_results.get('current_volatility_regime', 'N/A').upper()}</p>
+        
+        <h2>Strategy Analysis</h2>
+        <p>Detailed analysis results available in JSON format for programmatic access.</p>
+        
+        <h2>Recommendations</h2>
+        <div class="recommendation">
+            Primary recommendation and analysis details available in the full JSON export.
+        </div>
+    </body>
+    </html>
+    """
+    
+    with open(output_path, 'w') as f:
+        f.write(html_content)

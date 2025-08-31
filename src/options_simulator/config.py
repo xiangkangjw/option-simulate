@@ -78,3 +78,113 @@ class StrategyConfig:
             "max_dte": self.max_dte,
             "target_dte": self.target_dte,
         }
+
+
+class EnhancedHedgingConfig:
+    """Enhanced configuration for advanced tail hedging strategies with regime awareness."""
+    
+    def __init__(self, config_dict: Optional[dict] = None):
+        """Initialize enhanced hedging configuration."""
+        config = config_dict or {}
+        
+        # Original settings
+        self.default_expiration_months = config.get("default_expiration_months", [2, 3, 6, 12])
+        self.default_otm_percentages = config.get("default_otm_percentages", [0.12, 0.15, 0.18, 0.20])
+        self.transaction_cost_per_contract = config.get("transaction_cost_per_contract", 5.0)
+        self.commission_rate = config.get("commission_rate", 0.65)
+        self.default_rolling_threshold = config.get("default_rolling_threshold", 21)
+        
+        # Volatility regime settings
+        self.vix_regime_thresholds = config.get("vix_regime_thresholds", {
+            "low": 15, 
+            "medium": 25, 
+            "high": 40, 
+            "extreme": 60
+        })
+        
+        self.volatility_regime_multipliers = config.get("volatility_regime_multipliers", {
+            "low": 1.0, 
+            "medium": 1.3, 
+            "high": 1.8, 
+            "extreme": 2.5
+        })
+        
+        # Exit strategy settings
+        self.default_exit_triggers = config.get("default_exit_triggers", [
+            "vix_spike", "portfolio_protection", "time_decay"
+        ])
+        
+        self.vix_spike_thresholds = config.get("vix_spike_thresholds", {
+            "moderate": 30, 
+            "severe": 45, 
+            "extreme": 60
+        })
+        
+        self.profit_taking_thresholds = config.get("profit_taking_thresholds", [2.0, 5.0, 10.0])
+        
+        # Jump diffusion parameters
+        self.default_jump_intensity = config.get("default_jump_intensity", 0.1)  # jumps per year
+        self.default_jump_mean = config.get("default_jump_mean", -0.05)  # -5% average jump
+        self.default_jump_volatility = config.get("default_jump_volatility", 0.15)  # 15% jump volatility
+        
+        # Advanced modeling settings
+        self.enable_stochastic_volatility = config.get("enable_stochastic_volatility", True)
+        self.enable_correlation_breakdown = config.get("enable_correlation_breakdown", True)
+        self.monte_carlo_simulations = config.get("monte_carlo_simulations", 10000)
+        
+        # Performance settings
+        self.cache_calculations = config.get("cache_calculations", True)
+        self.parallel_processing = config.get("parallel_processing", True)
+        self.max_workers = config.get("max_workers", 4)
+        
+    def get_regime_config(self, regime: str) -> dict:
+        """Get configuration specific to a volatility regime."""
+        return {
+            "threshold": self.vix_regime_thresholds.get(regime, 25),
+            "multiplier": self.volatility_regime_multipliers.get(regime, 1.0),
+            "exit_triggers": self._get_regime_exit_triggers(regime)
+        }
+    
+    def _get_regime_exit_triggers(self, regime: str) -> list:
+        """Get exit triggers appropriate for a specific regime."""
+        if regime == "low":
+            return ["time_decay"]
+        elif regime == "medium":
+            return ["profit_target", "time_decay"]
+        elif regime == "high":
+            return ["vix_spike", "profit_target", "portfolio_protection"]
+        else:  # extreme
+            return ["vix_spike", "profit_target", "portfolio_protection", "correlation_breakdown"]
+    
+    def to_dict(self) -> dict:
+        """Convert configuration to dictionary."""
+        return {
+            "default_expiration_months": self.default_expiration_months,
+            "default_otm_percentages": self.default_otm_percentages,
+            "transaction_cost_per_contract": self.transaction_cost_per_contract,
+            "commission_rate": self.commission_rate,
+            "default_rolling_threshold": self.default_rolling_threshold,
+            "vix_regime_thresholds": self.vix_regime_thresholds,
+            "volatility_regime_multipliers": self.volatility_regime_multipliers,
+            "default_exit_triggers": self.default_exit_triggers,
+            "vix_spike_thresholds": self.vix_spike_thresholds,
+            "profit_taking_thresholds": self.profit_taking_thresholds,
+            "default_jump_intensity": self.default_jump_intensity,
+            "default_jump_mean": self.default_jump_mean,
+            "default_jump_volatility": self.default_jump_volatility,
+            "enable_stochastic_volatility": self.enable_stochastic_volatility,
+            "enable_correlation_breakdown": self.enable_correlation_breakdown,
+            "monte_carlo_simulations": self.monte_carlo_simulations,
+            "cache_calculations": self.cache_calculations,
+            "parallel_processing": self.parallel_processing,
+            "max_workers": self.max_workers
+        }
+    
+    @classmethod
+    def from_strategy_config(cls, strategy_config: StrategyConfig) -> "EnhancedHedgingConfig":
+        """Create enhanced config from basic strategy config."""
+        return cls({
+            "transaction_cost_per_contract": 5.0,  # Default enhanced settings
+            "default_otm_percentages": [strategy_config.otm_percentage],
+            "default_rolling_threshold": strategy_config.rolling_days
+        })
