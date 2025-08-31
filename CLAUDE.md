@@ -13,13 +13,13 @@ This is a Python CLI tool for simulating Universa-style tail hedging strategies 
 - before you do any work, MUST view files in .claude/tasks/context_session_x.md file to get the full context (x being the id of the session we are operating in, if file doesn't exist, then create one)
 - context_session_x.md should contain most of the context of what we did, overall plan, and sub agents will continuously add context to the file
 - after you finish the work, MUST update/append the .claude/tasks/context_session_x.md to make sure others can get full context of what you did. you MUST preserve the existing conversation.
+- whenever you use subagents, ask them to update the .claude/tasks/context_session_x.md with their findings
 
 ### Sub agents
 
 You have access to 6 sub agents:
 
-- quant-dev-advisor: Expert guidance on quantitative finance development, options pricing implementation,
-  derivatives modeling, and tail hedging strategy optimization
+- quant-dev-advisor: Expert guidance on quantitative finance development, options pricing implementation, derivatives modeling, and tail hedging strategy optimization
 - financial-data-engineer: Design and troubleshoot financial data infrastructure, API integrations, data pipelines, and caching systems for financial time series data
 - cli-architect: CLI application development, software architecture patterns, performance optimization for computational tasks, and testing frameworks
 - tail-hedge-portfolio-manager: Institutional-grade portfolio protection guidance, risk allocation strategies, and tail hedging portfolio management

@@ -123,3 +123,6 @@ Thumbs.db
 
 # MCP
 .serena/
+
+# Claude
+.claude/tasks/
