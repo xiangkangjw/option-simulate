@@ -86,6 +86,43 @@ options-sim run --portfolio-value 100000 --hedge-allocation 0.05 --dry-run
 
 # Execute with custom parameters
 options-sim run --portfolio-value 50000 --symbols "SPY,QQQ" --otm-percentage 0.18
+
+# SPX hedge comparison (enhanced feature)
+options-sim hedge-compare --portfolio-value 100000 --timeframes "3M,6M" --export-format csv
+```
+
+### Hedge Comparison Analysis
+
+The `hedge-compare` command provides sophisticated analysis of different SPX put option strategies:
+
+```bash
+# Basic comparison
+options-sim hedge-compare --portfolio-value 100000 --timeframes "3M,6M"
+
+# Comprehensive analysis with all features
+options-sim hedge-compare \
+  --portfolio-value 100000 \
+  --timeframes "2M,3M,6M,12M" \
+  --otm-percentages "0.12,0.15,0.18,0.20" \
+  --volatility-regime auto \
+  --enable-dynamic-exits \
+  --scenario-analysis \
+  --jump-diffusion-pricing \
+  --export-format csv
+
+# Export results for analysis
+options-sim hedge-compare --portfolio-value 100000 --timeframes "3M,6M" \
+  --export-format csv --output hedge_analysis_$(date +%Y%m%d).csv
+```
+
+**Key Features:**
+- **Volatility regime analysis**: Adjusts pricing based on current VIX environment
+- **Dynamic exit strategies**: Models profit-taking opportunities during black swan events
+- **Jump-diffusion pricing**: More accurate tail risk pricing vs Black-Scholes
+- **Comprehensive Greeks**: Regime-adjusted risk sensitivities
+- **Export capabilities**: CSV format for further analysis
+
+**Export Documentation**: See `docs/hedge-comparison-export-guide.md` for detailed explanation of CSV output fields including strategy_id, annual_cost, cost_percentage, jump_risk_premium, protection_ratio, and Greeks (delta, gamma, theta, vega).
 ```
 
 ## Architecture
