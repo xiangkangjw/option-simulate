@@ -1,6 +1,6 @@
 """Data providers for market data and options chains."""
 
-import yfinance as yf
+# yfinance library removed - using alternative Yahoo Finance API only
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
@@ -59,205 +59,187 @@ class YahooFinanceProvider(DataProvider):
     
     def __init__(self):
         self.last_request_time = 0
-        self.min_request_interval = 1.0  # Minimum 1 second between requests
+        self.min_request_interval = 2.0  # Increased to 2 seconds between requests
+        self.consecutive_failures = 0
+        self.backoff_multiplier = 1.0
     
     def _rate_limit(self):
-        """Implement rate limiting to avoid 429 errors."""
+        """Implement adaptive rate limiting with exponential backoff."""
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
         
-        if time_since_last_request < self.min_request_interval:
-            sleep_time = self.min_request_interval - time_since_last_request
-            # Add small random delay to avoid synchronized requests
-            sleep_time += random.uniform(0.1, 0.5)
+        # Calculate adaptive delay based on recent failures
+        adaptive_interval = self.min_request_interval * self.backoff_multiplier
+        
+        if time_since_last_request < adaptive_interval:
+            sleep_time = adaptive_interval - time_since_last_request
+            # Add random jitter to avoid synchronized requests
+            sleep_time += random.uniform(0.2, 1.0)
+            print(f"Rate limiting: sleeping {sleep_time:.1f}s (backoff: {self.backoff_multiplier:.1f}x)")
             time.sleep(sleep_time)
         
         self.last_request_time = time.time()
     
-    def get_stock_price(self, symbol: str) -> float:
-        """Get current stock price from Yahoo Finance."""
-        self._rate_limit()
+    def _record_success(self):
+        """Record a successful API call and reduce backoff."""
+        self.consecutive_failures = 0
+        self.backoff_multiplier = max(1.0, self.backoff_multiplier * 0.9)
+    
+    def _record_failure(self):
+        """Record a failed API call and increase backoff."""
+        self.consecutive_failures += 1
+        if self.consecutive_failures >= 2:
+            self.backoff_multiplier = min(8.0, self.backoff_multiplier * 2.0)
+            print(f"Increasing backoff to {self.backoff_multiplier:.1f}x after {self.consecutive_failures} failures")
+    
+    def _get_price_alternative_api(self, symbol: str) -> float:
+        """Get price using alternative Yahoo Finance API endpoint."""
+        url_symbol = symbol.replace('^', '%5E')  # URL encode ^ symbols
+        url = f'https://query1.finance.yahoo.com/v8/finance/chart/{url_symbol}'
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
         
         try:
-            ticker = yf.Ticker(symbol)
-            
-            # Try multiple approaches for getting current price
-            # 1. First try fast_info (most reliable with new yfinance version)
-            try:
-                fast_info = ticker.fast_info
-                if hasattr(fast_info, 'last_price') and fast_info.last_price:
-                    return float(fast_info.last_price)
-            except Exception as fast_error:
-                print(f"Fast info method failed for {symbol}: {fast_error}")
-            
-            # 2. Fallback to ticker.info
-            try:
-                info = ticker.info
-                if 'regularMarketPrice' in info and info['regularMarketPrice']:
-                    return float(info['regularMarketPrice'])
-                elif 'previousClose' in info and info['previousClose']:
-                    return float(info['previousClose'])
-            except Exception as info_error:
-                print(f"Info method failed for {symbol}: {info_error}")
-            
-            # 3. Try yf.download as fallback
-            try:
-                data = yf.download(symbol, period="1d", interval="1d", progress=False, auto_adjust=True)
-                if not data.empty:
-                    return float(data['Close'].iloc[-1])
-            except Exception as download_error:
-                print(f"Download method failed for {symbol}: {download_error}")
-            
-            # 4. Last resort - try historical data
-            try:
-                hist = ticker.history(period="5d")
-                if not hist.empty:
-                    return float(hist['Close'].iloc[-1])
-            except Exception as hist_error:
-                print(f"History method failed for {symbol}: {hist_error}")
-            
-            return 0.0
-            
-        except requests.exceptions.HTTPError as http_error:
-            if "429" in str(http_error):
-                print(f"Rate limited for {symbol}. Consider using a longer delay between requests.")
-                # Exponential backoff for rate limiting
-                time.sleep(random.uniform(2, 5))
-                return 0.0
-            else:
-                print(f"HTTP error fetching stock price for {symbol}: {http_error}")
-                return 0.0
-        except requests.exceptions.JSONDecodeError as json_error:
-            print(f"JSON decode error for {symbol} (Yahoo may be rate limiting): {json_error}")
-            return 0.0
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'chart' in data and data['chart']['result']:
+                    result = data['chart']['result'][0]
+                    if 'meta' in result and 'regularMarketPrice' in result['meta']:
+                        price = float(result['meta']['regularMarketPrice'])
+                        print(f"Alternative API success for {symbol}: ${price:.2f}")
+                        return price
         except Exception as e:
-            print(f"Error fetching stock price for {symbol}: {e}")
+            print(f"Alternative API failed for {symbol}: {e}")
+        
+        return 0.0
+    
+    def get_stock_price(self, symbol: str) -> float:
+        """Get current stock price from Yahoo Finance using alternative API only."""
+        self._rate_limit()
+        
+        # Use alternative API (proven to work without yfinance dependency)
+        print(f"Fetching {symbol} using alternative Yahoo Finance API...")
+        price = self._get_price_alternative_api(symbol)
+        if price > 0:
+            self._record_success()
+            return price
+        else:
+            self._record_failure()
+            print(f"Failed to fetch price for {symbol}")
             return 0.0
     
     def get_options_chain(self, symbol: str, expiration: str = None) -> List[OptionContract]:
         """Get options chain from Yahoo Finance."""
         self._rate_limit()
         
-        try:
-            ticker = yf.Ticker(symbol)
-            
-            # Get available expiration dates with error handling
-            try:
-                available_expirations = ticker.options
-                if not available_expirations:
-                    print(f"No options available for {symbol}")
-                    return []
-                
-                if expiration:
-                    if expiration in available_expirations:
-                        expirations = [expiration]
-                    else:
-                        print(f"Expiration {expiration} not available for {symbol}")
-                        return []
-                else:
-                    # Filter expirations to target 21-90 DTE range for tail hedging
-                    from datetime import datetime as dt, date
-                    today = date.today()
-                    filtered_expirations = []
-                    for exp_str in available_expirations:
-                        try:
-                            exp_date = dt.strptime(exp_str, '%Y-%m-%d').date()
-                            dte = (exp_date - today).days
-                            if 21 <= dte <= 90:  # Target range for tail hedging
-                                filtered_expirations.append(exp_str)
-                        except ValueError:
-                            continue
-                    
-                    expirations = filtered_expirations[:5] if filtered_expirations else available_expirations[:3]
-                    
-            except requests.exceptions.JSONDecodeError as json_error:
-                print(f"JSON decode error getting expirations for {symbol}: {json_error}")
-                return []
-            except Exception as exp_error:
-                print(f"Error getting option expirations for {symbol}: {exp_error}")
-                return []
-            
-            contracts = []
-            
-            for exp_date in expirations:
-                try:
-                    # Add rate limiting between expiration date requests
-                    if len(contracts) > 0:  # Only sleep after first request
-                        time.sleep(0.5)
-                    
-                    chain = ticker.option_chain(exp_date)
-                    
-                    # Process puts (primary focus for tail hedging)
-                    for _, put in chain.puts.iterrows():
-                        try:
-                            contract = OptionContract(
-                                symbol=put.get('contractSymbol', ''),
-                                underlying=symbol,
-                                strike=safe_float(put.get('strike'), 0),
-                                expiration=datetime.strptime(exp_date, '%Y-%m-%d').date(),
-                                option_type='put',
-                                bid=safe_float(put.get('bid'), 0),
-                                ask=safe_float(put.get('ask'), 0),
-                                last=safe_float(put.get('lastPrice'), 0),
-                                volume=safe_int(put.get('volume'), 0),
-                                open_interest=safe_int(put.get('openInterest'), 0)
-                            )
-                            contracts.append(contract)
-                        except Exception as contract_error:
-                            print(f"Error creating put contract for {symbol}: {contract_error}")
-                            continue
-                    
-                    # Also include calls for completeness
-                    for _, call in chain.calls.iterrows():
-                        try:
-                            contract = OptionContract(
-                                symbol=call.get('contractSymbol', ''),
-                                underlying=symbol,
-                                strike=safe_float(call.get('strike'), 0),
-                                expiration=datetime.strptime(exp_date, '%Y-%m-%d').date(),
-                                option_type='call',
-                                bid=safe_float(call.get('bid'), 0),
-                                ask=safe_float(call.get('ask'), 0),
-                                last=safe_float(call.get('lastPrice'), 0),
-                                volume=safe_int(call.get('volume'), 0),
-                                open_interest=safe_int(call.get('openInterest'), 0)
-                            )
-                            contracts.append(contract)
-                        except Exception as contract_error:
-                            print(f"Error creating call contract for {symbol}: {contract_error}")
-                            continue
-                        
-                except requests.exceptions.JSONDecodeError as json_error:
-                    print(f"JSON decode error processing expiration {exp_date} for {symbol}: {json_error}")
-                    continue
-                except Exception as e:
-                    print(f"Error processing expiration {exp_date}: {e}")
-                    continue
-            
-            return contracts
-            
-        except requests.exceptions.HTTPError as http_error:
-            if "429" in str(http_error):
-                print(f"Rate limited getting options for {symbol}. Consider using a longer delay.")
-                time.sleep(random.uniform(3, 6))
-            else:
-                print(f"HTTP error fetching options chain for {symbol}: {http_error}")
-            return []
-        except Exception as e:
-            print(f"Error fetching options chain for {symbol}: {e}")
-            return []
+        # yfinance is disabled, return empty list for now
+        # TODO: Implement options chain via alternative API if available
+        print(f"Options chain not available without yfinance dependency for {symbol}")
+        return []
     
     def get_historical_data(
         self, symbol: str, start_date: date, end_date: date
     ) -> pd.DataFrame:
-        """Get historical price data from Yahoo Finance."""
+        """Get historical price data from Yahoo Finance using alternative API."""
+        self._rate_limit()
+        
+        # Convert dates to timestamps
+        start_timestamp = int(start_date.strftime('%s'))
+        end_timestamp = int(end_date.strftime('%s'))
+        
+        url_symbol = symbol.replace('^', '%5E')  # URL encode ^ symbols
+        url = f'https://query1.finance.yahoo.com/v8/finance/chart/{url_symbol}'
+        
+        params = {
+            'period1': start_timestamp,
+            'period2': end_timestamp,
+            'interval': '1d',
+            'includePrePost': 'true',
+            'events': 'div,splits'
+        }
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
         try:
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(start=start_date, end=end_date)
-            return hist
+            response = requests.get(url, params=params, headers=headers, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                if 'chart' in data and data['chart']['result']:
+                    result = data['chart']['result'][0]
+                    
+                    # Extract timestamps and price data
+                    timestamps = result['timestamp']
+                    quotes = result['indicators']['quote'][0]
+                    
+                    # Build DataFrame
+                    df_data = {
+                        'Open': quotes.get('open', []),
+                        'High': quotes.get('high', []),
+                        'Low': quotes.get('low', []),
+                        'Close': quotes.get('close', []),
+                        'Volume': quotes.get('volume', [])
+                    }
+                    
+                    # Create DataFrame with proper datetime index
+                    df = pd.DataFrame(df_data)
+                    df.index = pd.to_datetime(timestamps, unit='s')
+                    
+                    # Clean the data
+                    df = df.dropna()
+                    
+                    print(f"Successfully fetched {len(df)} days of historical data for {symbol}")
+                    self._record_success()
+                    return df
+                    
         except Exception as e:
             print(f"Error fetching historical data for {symbol}: {e}")
-            return pd.DataFrame()
+            self._record_failure()
+            
+        return pd.DataFrame()
+
+    def get_vix_level(self) -> float:
+        """Get current VIX level from Yahoo Finance."""
+        return self.get_stock_price("^VIX")
+    
+    def get_treasury_rate(self, tenor: str = "10Y") -> float:
+        """Get Treasury yield for specified tenor.
+        
+        Args:
+            tenor: Treasury tenor (3M, 6M, 2Y, 10Y, 30Y)
+            
+        Returns:
+            Treasury yield as decimal (e.g., 0.045 for 4.5%)
+        """
+        self._rate_limit()
+        
+        # Map tenor to Yahoo Finance symbols
+        tenor_symbols = {
+            "3M": "^IRX",    # 3-Month Treasury
+            "6M": "^IRX",    # Use 3M as proxy for 6M
+            "2Y": "^TNX",    # Use 10Y as proxy for 2Y  
+            "10Y": "^TNX",   # 10-Year Treasury Note
+            "30Y": "^TYX"    # 30-Year Treasury Bond
+        }
+        
+        symbol = tenor_symbols.get(tenor, "^TNX")
+        
+        try:
+            # Use alternative API to get Treasury rate
+            rate = self._get_price_alternative_api(symbol)
+            if rate > 0 and rate < 15:  # Reasonable rate range (0-15% as percentage)
+                return rate / 100.0  # Convert percentage to decimal
+            
+            # Default fallback for common rates if API fails
+            defaults = {"3M": 0.045, "10Y": 0.045, "30Y": 0.048}
+            return defaults.get(tenor, 0.045)
+            
+        except Exception as e:
+            print(f"Error fetching Treasury rate for {tenor}: {e}")
+            return 0.045  # 4.5% default
 
 
 class AlphaVantageProvider(DataProvider):
@@ -334,6 +316,28 @@ class AlphaVantageProvider(DataProvider):
         except Exception as e:
             print(f"Error fetching historical data from Alpha Vantage: {e}")
             return pd.DataFrame()
+
+    def get_vix_level(self) -> float:
+        """Get current VIX level from Alpha Vantage."""
+        return self.get_stock_price("VIX")  # Alpha Vantage uses VIX without ^
+    
+    def get_treasury_rate(self, tenor: str = "10Y") -> float:
+        """Get Treasury yield - Alpha Vantage has limited support for Treasury data.
+        
+        Args:
+            tenor: Treasury tenor (not fully supported by Alpha Vantage)
+            
+        Returns:
+            Treasury yield as decimal, defaults to 4.5% if not available
+        """
+        if not self.api_key:
+            print("Alpha Vantage API key not configured for Treasury rates")
+            return 0.045
+            
+        # Alpha Vantage has limited Treasury data support
+        # For production, consider using FRED API for Treasury rates
+        print(f"Alpha Vantage Treasury rate support limited, using default for {tenor}")
+        return 0.045  # Default 4.5%
 
 
 class DataProviderFactory:
@@ -478,3 +482,92 @@ class MarketDataManager:
                           f"bid:${put.bid:.2f} ask:${put.ask:.2f} last:${put.last:.2f}")
         
         return candidates
+
+    def get_vix_level(self) -> float:
+        """Get current VIX level with fallback."""
+        try:
+            vix = self.primary.get_vix_level()
+            if vix > 0 and vix < 100:  # Reasonable VIX range
+                return vix
+        except Exception as e:
+            print(f"Primary provider VIX fetch failed: {e}")
+        
+        # Try fallback provider
+        if self.primary != self.fallback:
+            try:
+                vix = self.fallback.get_vix_level()
+                if vix > 0 and vix < 100:
+                    return vix
+            except Exception as e:
+                print(f"Fallback provider VIX fetch failed: {e}")
+        
+        print("Warning: Using default VIX level (20.0) due to API failures")
+        return 20.0  # Conservative default
+    
+    def get_treasury_rate(self, tenor: str = "10Y") -> float:
+        """Get Treasury rate with fallback."""
+        try:
+            rate = self.primary.get_treasury_rate(tenor)
+            if 0 < rate < 0.15:  # Reasonable rate range (0-15%)
+                return rate
+        except Exception as e:
+            print(f"Primary provider Treasury rate fetch failed: {e}")
+        
+        # Try fallback provider
+        if self.primary != self.fallback:
+            try:
+                rate = self.fallback.get_treasury_rate(tenor)
+                if 0 < rate < 0.15:
+                    return rate
+            except Exception as e:
+                print(f"Fallback provider Treasury rate fetch failed: {e}")
+        
+        print(f"Warning: Using default {tenor} rate (4.5%) due to API failures")
+        return 0.045  # Default 4.5%
+    
+    def get_market_conditions(self, symbol: str = "SPY") -> dict:
+        """Get comprehensive current market conditions.
+        
+        Args:
+            symbol: Primary equity symbol to analyze (default: SPY)
+            
+        Returns:
+            Dictionary with market conditions including VIX, prices, and rates
+        """
+        conditions = {}
+        
+        # Get current equity price
+        conditions['spy_price'] = self.get_stock_price(symbol)
+        if conditions['spy_price'] == 0.0:
+            print(f"Warning: Could not fetch {symbol} price, using default $420")
+            conditions['spy_price'] = 420.0
+        
+        # Get VIX level
+        conditions['vix'] = self.get_vix_level()
+        
+        # Get risk-free rate (10-year Treasury as primary)
+        conditions['risk_free_rate'] = self.get_treasury_rate("10Y")
+        
+        # Calculate additional market metrics
+        conditions['average_correlation'] = 0.6  # TODO: Calculate from real data
+        conditions['volume_ratio'] = 1.0  # TODO: Calculate from volume data
+        conditions['bid_ask_spread_ratio'] = 1.2  # TODO: Calculate from options data
+        conditions['portfolio_return'] = 0.0  # Neutral for new analysis
+        
+        # Determine volatility regime based on VIX
+        vix = conditions['vix']
+        if vix < 15:
+            conditions['volatility_regime'] = 'low'
+        elif vix < 25:
+            conditions['volatility_regime'] = 'medium'  
+        elif vix < 40:
+            conditions['volatility_regime'] = 'high'
+        else:
+            conditions['volatility_regime'] = 'extreme'
+        
+        # Add metadata
+        from datetime import datetime
+        conditions['data_timestamp'] = datetime.now().isoformat()
+        conditions['data_source'] = type(self.primary).__name__
+        
+        return conditions

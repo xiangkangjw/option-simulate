@@ -22,6 +22,7 @@ from ..analysis.hedge_comparison import HedgeComparisonEngine, HedgingStrategy
 from ..analysis.volatility_regime import VolatilityRegime
 from ..analysis.exit_strategy import ExitTrigger, ExitTriggerType
 from ..config import EnhancedHedgingConfig
+from ..services.service_factory import ServiceFactory
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -44,6 +45,8 @@ console = Console()
               help='Exit trigger types (vix_spike,portfolio_protection,profit_target,time_decay)')
 @click.option('--scenario-analysis/--no-scenario-analysis', default=False,
               help='Include historical scenario testing with vol dynamics')
+@click.option('--crisis-periods', type=str, default="covid_2020,volmageddon_2018",
+              help='Crisis periods to analyze (covid_2020,volmageddon_2018,financial_2008)')
 @click.option('--show-regime-greeks/--no-regime-greeks', default=True,
               help='Display regime-adjusted Greeks comparison')
 @click.option('--jump-diffusion-pricing/--no-jump-diffusion', default=True,
@@ -57,6 +60,12 @@ console = Console()
               help='Historical stress test depth (default: 6 scenarios)')
 @click.option('--vix-level', type=float, help='Override current VIX level for testing')
 @click.option('--spy-price', type=float, help='Override current SPY price for testing')
+@click.option('--use-real-data/--use-mock-data', default=True,
+              help='Use real market data (default) or mock data for testing')
+@click.option('--data-provider', type=click.Choice(['yahoo', 'alphavantage', 'auto']),
+              default='auto', help='Data provider preference')
+@click.option('--max-data-age', type=int, default=300,
+              help='Maximum data age in seconds (default: 5 minutes)')
 def hedge_compare(portfolio_value: int,
                  timeframes: str,
                  otm_percentages: str, 
@@ -72,7 +81,11 @@ def hedge_compare(portfolio_value: int,
                  hybrid_analysis: bool,
                  stress_test_depth: int,
                  vix_level: Optional[float],
-                 spy_price: Optional[float]):
+                 spy_price: Optional[float],
+                 use_real_data: bool,
+                 data_provider: str,
+                 max_data_age: int,
+                 crisis_periods: str):
     """
     Compare SPX put option hedging strategies with regime-aware analysis.
     
@@ -93,8 +106,32 @@ def hedge_compare(portfolio_value: int,
         otm_list = _parse_otm_percentages(otm_percentages)
         exit_trigger_list = _parse_exit_triggers(exit_triggers)
         
-        # Create market conditions (use mock data or provided overrides)
-        market_conditions = _create_market_conditions(vix_level, spy_price)
+        # Get market data service
+        if data_provider == 'auto':
+            market_service = ServiceFactory.get_market_data_service()
+        else:
+            market_service = ServiceFactory.get_market_data_service(
+                primary_provider=data_provider,
+                fallback_provider='yahoo'
+            )
+        
+        # Get market conditions with real data or overrides
+        if use_real_data:
+            console.print("🔄 Fetching real-time market data...")
+            market_conditions = market_service.get_current_market_conditions(
+                symbol="SPY",
+                vix_override=vix_level,
+                spy_override=spy_price
+            )
+            
+            # Display data source information
+            data_source = market_conditions.get('data_source', 'unknown')
+            is_real = market_conditions.get('is_real_data', False)
+            data_status = "✅ Live Data" if is_real else "⚠️ Override/Fallback"
+            console.print(f"📡 Data Source: {data_source} ({data_status})")
+        else:
+            console.print("🎭 Using mock market data for testing...")
+            market_conditions = _create_market_conditions(vix_level, spy_price)
         
         # Initialize enhanced configuration
         config = EnhancedHedgingConfig()
@@ -105,6 +142,17 @@ def hedge_compare(portfolio_value: int,
         console.print(f"📊 Analyzing {len(timeframe_list)} timeframes × {len(otm_list)} OTM levels")
         console.print(f"💼 Portfolio Value: ${portfolio_value:,}")
         console.print(f"📈 Current Market: VIX {market_conditions['vix']:.1f}, SPY ${market_conditions['spy_price']:.2f}")
+        
+        # Show additional market information for real data
+        if use_real_data:
+            regime = market_conditions.get('volatility_regime', 'unknown')
+            rate = market_conditions.get('risk_free_rate', 0.05)
+            timestamp = market_conditions.get('data_timestamp', '')
+            console.print(f"⚡ Volatility Regime: {regime.upper()}")
+            console.print(f"🏦 Risk-Free Rate: {rate:.2%}")
+            if timestamp:
+                console.print(f"🕐 Data Time: {timestamp[:16]}")
+        
         console.print()
         
         # Create strategy combinations
@@ -128,7 +176,9 @@ def hedge_compare(portfolio_value: int,
                 strategies=strategies,
                 portfolio_value=portfolio_value,
                 current_market_conditions=market_conditions,
-                historical_data=_get_sample_historical_data() if scenario_analysis else None
+                historical_data=_get_enhanced_historical_data(
+                    market_service, crisis_periods, use_real_data
+                ) if scenario_analysis else None
             )
         
         # Display results
@@ -211,7 +261,7 @@ def _parse_exit_triggers(triggers_str: str) -> List[ExitTriggerType]:
 
 def _create_market_conditions(vix_override: Optional[float] = None,
                             spy_override: Optional[float] = None) -> Dict[str, float]:
-    """Create market conditions (mock data for demonstration)."""
+    """Create market conditions (fallback mock data for testing)."""
     return {
         'vix': vix_override or 22.5,
         'spy_price': spy_override or 420.0,
@@ -219,7 +269,11 @@ def _create_market_conditions(vix_override: Optional[float] = None,
         'average_correlation': 0.6,
         'volume_ratio': 1.0,
         'bid_ask_spread_ratio': 1.2,
-        'portfolio_return': 0.0  # Assume neutral for new analysis
+        'portfolio_return': 0.0,  # Assume neutral for new analysis
+        'volatility_regime': 'medium',  # Default regime
+        'data_timestamp': datetime.now().isoformat(),
+        'data_source': 'mock_data',
+        'is_real_data': False
     }
 
 
@@ -268,6 +322,65 @@ def _create_hedging_strategy(expiration_months: int,
         volatility_regime_adjustments=regime_adjustments,
         exit_triggers=exit_triggers
     )
+
+
+def _get_enhanced_historical_data(market_service,
+                               crisis_periods_str: str,
+                               use_real_data: bool) -> pd.DataFrame:
+    """Get enhanced historical data with crisis period support."""
+    if not use_real_data:
+        console.print("📈 Using simulated historical data for scenario analysis")
+        return _get_sample_historical_data()
+    
+    console.print("📊 Fetching real historical data for scenario analysis...")
+    
+    # Parse crisis periods
+    crisis_list = [p.strip() for p in crisis_periods_str.split(',') if p.strip()]
+    
+    all_data = pd.DataFrame()
+    
+    for crisis_name in crisis_list:
+        try:
+            console.print(f"   🔍 Loading {crisis_name} crisis data...")
+            crisis_data = market_service.get_crisis_period_data(crisis_name)
+            
+            if not crisis_data.empty:
+                # Add crisis identifier
+                crisis_data['crisis'] = crisis_name
+                all_data = pd.concat([all_data, crisis_data], ignore_index=False)
+                console.print(f"   ✅ Loaded {len(crisis_data)} days from {crisis_name}")
+            else:
+                console.print(f"   ⚠️  No data available for {crisis_name}")
+        
+        except Exception as e:
+            console.print(f"   ❌ Failed to load {crisis_name}: {e}")
+            continue
+    
+    if all_data.empty:
+        console.print("📈 No real crisis data available, using simulated data")
+        return _get_sample_historical_data()
+    
+    # Remove duplicates and sort by date
+    all_data = all_data.sort_index().drop_duplicates()
+    
+    console.print(f"✅ Loaded total of {len(all_data)} historical data points")
+    console.print(f"📅 Date range: {all_data.index.min().strftime('%Y-%m-%d')} to {all_data.index.max().strftime('%Y-%m-%d')}")
+    
+    # Display crisis period statistics
+    if 'crisis' in all_data.columns:
+        crisis_summary = all_data.groupby('crisis').agg({
+            'vix': ['mean', 'max'],
+            'spy_return': ['mean', 'std']
+        }).round(3)
+        console.print("\n📊 Crisis Period Summary:")
+        for crisis in crisis_summary.index:
+            vix_mean = crisis_summary.loc[crisis, ('vix', 'mean')]
+            vix_max = crisis_summary.loc[crisis, ('vix', 'max')]
+            ret_mean = crisis_summary.loc[crisis, ('spy_return', 'mean')]
+            ret_std = crisis_summary.loc[crisis, ('spy_return', 'std')]
+            console.print(f"   {crisis}: VIX avg={vix_mean:.1f} max={vix_max:.1f}, Return avg={ret_mean:.3f}±{ret_std:.3f}")
+    
+    return all_data
 
 
 def _get_sample_historical_data() -> pd.DataFrame:

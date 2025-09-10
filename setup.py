@@ -30,7 +30,7 @@ setup(
         "scipy>=1.11.0",
         "py-vollib>=1.0.0",
         "mibian>=0.1.0",
-        "yfinance>=0.2.0",
+        # "yfinance>=0.2.0",  # Removed - using alternative Yahoo Finance API
         "alpha-vantage>=2.3.0",
         "requests>=2.31.0",
         "click>=8.1.0",

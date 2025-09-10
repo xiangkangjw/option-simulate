@@ -137,6 +137,26 @@ class EnhancedHedgingConfig:
         self.parallel_processing = config.get("parallel_processing", True)
         self.max_workers = config.get("max_workers", 4)
         
+        # Data provider settings
+        self.primary_data_provider = config.get("primary_data_provider", "yahoo")
+        self.fallback_data_provider = config.get("fallback_data_provider", "yahoo")
+        self.enable_data_caching = config.get("enable_data_caching", True)
+        self.data_freshness_threshold = config.get("data_freshness_threshold", 300)  # 5 minutes
+        
+        # Historical data settings
+        self.historical_data_start = config.get("historical_data_start", "2020-01-01")
+        self.historical_data_end = config.get("historical_data_end", "2023-12-31")
+        self.crisis_periods = config.get("crisis_periods", {
+            "covid_2020": {"start": "2020-01-01", "end": "2020-06-30", "name": "COVID-19 Crisis"},
+            "volmageddon_2018": {"start": "2018-01-01", "end": "2018-04-30", "name": "Volmageddon 2018"},
+            "financial_2008": {"start": "2008-06-01", "end": "2009-06-30", "name": "Financial Crisis 2008"}
+        })
+        
+        # Market hours and validation
+        self.validate_market_hours = config.get("validate_market_hours", True)
+        self.handle_holidays = config.get("handle_holidays", True)
+        self.data_quality_checks = config.get("data_quality_checks", True)
+        
     def get_regime_config(self, regime: str) -> dict:
         """Get configuration specific to a volatility regime."""
         return {
