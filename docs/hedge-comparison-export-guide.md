@@ -1,57 +1,122 @@
 # Hedge Comparison Export Guide
+## Understanding Your CSV Results
 
-This guide explains the fields in the CSV export from the `options-sim hedge-compare` command.
+This guide explains the CSV export from the `options-sim hedge-compare` command in simple terms. If you're new to tail hedging, start with the [Hedge Compare User Guide](hedge-compare-user-guide.md) first.
+
+**Quick Summary**: The CSV contains all the data you need to compare different put option strategies for protecting your portfolio during market crashes.
 
 ## CSV Export Fields
 
-When you export hedge comparison results using `--export-format csv`, the CSV file contains the following fields:
+When you export results using `--export-format csv`, you get a spreadsheet with all the data needed to analyze your hedging strategies. Here's what each column means:
 
-### Core Strategy Identification
-- **`strategy_id`**: Unique identifier for the strategy (e.g., "3M_15%_OTM", "6M_20%_OTM")
-  - Format: `{expiration_months}M_{otm_percentage}%_OTM`
-  - Example: "6M_15%_OTM" = 6-month expiration, 15% out-of-the-money puts
+> **💡 Pro Tip**: Open the CSV in Excel or Google Sheets for easier analysis. You can sort by cost, protection ratio, or any other field to find your optimal strategy.
 
-### Cost Analysis
-- **`annual_cost`**: Total annual cost of the hedging strategy in dollars
-  - Calculated based on option premium × contracts needed × rolling frequency
-  - Example: $10,000 means the strategy costs $10,000 per year to maintain
-  
-- **`cost_percentage`**: Annual cost as a percentage of total portfolio value
-  - Formula: `annual_cost / portfolio_value`
-  - Example: 0.10 = 10% of portfolio value spent on hedging annually
+### 📋 Strategy Identification
 
-### Pricing Analysis
-- **`jump_risk_premium`**: Premium captured by jump-diffusion pricing vs Black-Scholes
-  - Represents additional tail risk protection beyond standard Black-Scholes model
-  - Positive values indicate jump-diffusion model prices options higher (better tail protection)
-  - Example: 0.15 = 15% higher price than Black-Scholes, indicating significant tail risk premium
+**`strategy_id`** - Your Strategy Name
+- **What it is**: A simple code that identifies each hedging approach
+- **Format**: `{months}M_{percentage}%_OTM`
+- **Examples**: 
+  - "3M_15%_OTM" = 3-month expiration, 15% out-of-the-money puts
+  - "6M_20%_OTM" = 6-month expiration, 20% out-of-the-money puts
+- **Why it matters**: Helps you track which strategy is which when comparing results
 
-### Performance Metrics  
-- **`protection_ratio`**: Expected return multiplier during stress events
-  - Indicates how many times the strategy cost you expect to recover during market crashes
-  - Example: 3.0 = expect 3x returns (300% gains) during tail events
-  - Higher values indicate more effective portfolio protection
+### 💰 Cost Analysis - What You Pay
 
-### Greeks (Risk Sensitivities)
-The Greeks measure how option prices change with various market factors:
+**`annual_cost`** - Your Annual Insurance Premium
+- **What it is**: Total dollars you pay per year for this protection
+- **Think of it as**: Your annual insurance premium for market crash protection
+- **Example**: $10,000 means you pay $10,000 per year to maintain this strategy
+- **Calculation**: Includes option premiums, rolling costs, and transaction fees
+- **Target range**: Should be 2-5% of your total portfolio value
 
-- **`delta`**: Price sensitivity to underlying asset movement
-  - Negative for puts (price increases when underlying falls)
-  - Example: -0.032 = option price increases $0.032 per $1 decline in SPY
-  
-- **`gamma`**: Rate of change of delta (convexity measure)
-  - Higher gamma provides better convexity during large moves
-  - Example: 0.0018 = delta increases by 0.0018 for each $1 move in underlying
-  
-- **`theta`**: Time decay (daily price erosion)
-  - Always negative for long options
-  - Example: 5.29 = option loses $5.29 in value per day due to time decay
-  
-- **`vega`**: Volatility sensitivity
-  - Positive for long options (benefit from volatility increases)
-  - Example: 14.280 = option price increases $14.28 per 1% increase in implied volatility
+**`cost_percentage`** - Cost as % of Portfolio
+- **What it is**: Annual cost divided by your total portfolio value
+- **Why it's useful**: Makes it easy to compare across different portfolio sizes
+- **Example**: 0.035 = 3.5% of your portfolio spent on hedging each year
+- **Guidelines**:
+  - **Under 3%**: Very cost-efficient ✅
+  - **3-5%**: Reasonable range ✅
+  - **Over 5%**: Expensive, may not be worth it ⚠️
 
-## Interpreting the Results
+### 📊 Advanced Pricing Analysis
+
+**`jump_risk_premium`** - Extra Crash Protection
+- **What it is**: How much extra protection you get from advanced pricing models
+- **Simple explanation**: Measures "black swan bonus" protection beyond normal market volatility
+- **Positive numbers**: Good! More crash protection than standard models suggest
+- **Negative numbers**: May be overpriced given current market conditions
+- **Example**: 0.15 = 15% extra protection value, meaning this strategy is particularly good at protecting against sudden crashes
+- **When to pay attention**: If you're specifically worried about sudden, large market drops
+
+### 🛡️ Protection Effectiveness
+
+**`protection_ratio`** - Your Crash Payoff Multiplier
+- **What it is**: How many times your annual premium you expect to get back during major crashes
+- **Think of it as**: Return on your insurance premium during disasters
+- **Example**: 4.0 means if you pay $10,000/year, you get $40,000 back during a major crash
+- **Target**: Aim for 3.0 or higher for meaningful protection
+- **Guidelines**:
+  - **3.0+**: Good protection ✅
+  - **2.0-3.0**: Moderate protection ⚠️
+  - **Under 2.0**: Weak protection, probably not worth the cost ❌
+
+### 📈 The Greeks - Risk Sensitivities (Advanced)
+
+The Greeks tell you how your options respond to different market changes. Think of them as the "dials" that control your protection:
+
+> **💡 For Beginners**: Focus on Delta and Theta first. These tell you the most about responsiveness and daily cost.
+
+**`delta`** - Market Sensitivity
+- **What it measures**: How much your protection value changes when the market moves
+- **For puts**: Always negative (good thing - means you profit when market falls)
+- **Example**: -0.08 = option gains $0.08 for every $1 drop in SPX
+- **Practical meaning**: More negative delta = more responsive protection
+- **What to look for**: More negative numbers mean better immediate protection
+
+**`gamma`** - Acceleration Factor  
+- **What it measures**: How much your delta changes as the market moves (think "acceleration")
+- **Why it matters**: Higher gamma = better protection during large, sudden moves
+- **Example**: 0.003 = your delta becomes more negative as market falls (protection gets stronger)
+- **For tail hedging**: Higher gamma = better black swan protection
+- **What to look for**: Higher positive numbers for better crash protection
+
+**`theta`** - Daily Cost
+- **What it measures**: How much value your options lose each day just from time passing
+- **Think of it as**: Daily "rent" you pay for owning protection
+- **Always negative**: You lose this amount every day the market doesn't crash
+- **Example**: -6.50 = you lose $6.50 per day in option value due to time
+- **What to look for**: Less negative numbers = lower daily cost
+
+**`vega`** - Fear Factor Sensitivity
+- **What it measures**: How much your options gain when market fear (volatility) increases
+- **Why it's important**: Markets get volatile during crashes, benefiting your puts
+- **Example**: 25.4 = option gains $25.40 for every 1% increase in market volatility
+- **For tail hedging**: Higher vega = more benefit when markets panic
+- **What to look for**: Higher positive numbers for better crisis protection
+
+## Quick Decision Framework
+
+### The 30-Second Analysis
+
+When you open your CSV file, look for these key patterns:
+
+1. **Find strategies with cost_percentage between 0.02-0.05** (2-5%)
+2. **Look for protection_ratio above 3.0**
+3. **Choose based on your profile**:
+   - **Conservative**: Lowest cost_percentage with decent protection_ratio
+   - **Aggressive**: Highest protection_ratio within your cost budget
+   - **Balanced**: Best cost_percentage to protection_ratio ratio
+
+### Red Flags to Avoid ⚠️
+
+- **Cost_percentage > 0.05**: Too expensive
+- **Protection_ratio < 2.0**: Weak protection
+- **Very negative jump_risk_premium**: Overpriced options
+
+---
+
+## Detailed Analysis Guide
 
 ### Cost Efficiency Analysis
 - **Lower `annual_cost`** and **`cost_percentage`** = more cost-efficient

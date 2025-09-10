@@ -103,7 +103,7 @@ options-sim hedge-compare --portfolio-value 100000 --timeframes "3M,6M"
 options-sim hedge-compare \
   --portfolio-value 100000 \
   --timeframes "2M,3M,6M,12M" \
-  --otm-percentages "0.12,0.15,0.18,0.20" \
+  --otm-percentages "0\.12,0\.15,0\.18,0\.20" \
   --volatility-regime auto \
   --enable-dynamic-exits \
   --scenario-analysis \
@@ -112,17 +112,22 @@ options-sim hedge-compare \
 
 # Export results for analysis
 options-sim hedge-compare --portfolio-value 100000 --timeframes "3M,6M" \
-  --export-format csv --output hedge_analysis_$(date +%Y%m%d).csv
+  --export-format csv --output hedge_analysis_\$\(date \+%Y%m%d\)\.csv
 ```
 
-**Key Features:**
-- **Volatility regime analysis**: Adjusts pricing based on current VIX environment
-- **Dynamic exit strategies**: Models profit-taking opportunities during black swan events
-- **Jump-diffusion pricing**: More accurate tail risk pricing vs Black-Scholes
-- **Comprehensive Greeks**: Regime-adjusted risk sensitivities
-- **Export capabilities**: CSV format for further analysis
+\*\*Key Features:\*\*
+- \*\*Volatility regime analysis\*\*: Adjusts pricing based on current VIX environment
+- \*\*Dynamic exit strategies\*\*: Models profit-taking opportunities during black swan events
+- \*\*Jump-diffusion pricing\*\*: More accurate tail risk pricing vs Black-Scholes
+- \*\*Comprehensive Greeks\*\*: Regime-adjusted risk sensitivities
+- \*\*Export capabilities\*\*: CSV format for further analysis
 
-**Export Documentation**: See `docs/hedge-comparison-export-guide.md` for detailed explanation of CSV output fields including strategy_id, annual_cost, cost_percentage, jump_risk_premium, protection_ratio, and Greeks (delta, gamma, theta, vega).
+\*\*Documentation Structure:\*\*
+- \*\*Quick Start\*\*: `docs/hedge-compare-quick-start\.md` - Get results in 5 minutes
+- \*\*User Guide\*\*: `docs/hedge-compare-user-guide\.md` - Complete educational guide for CFA L1\+ users
+- \*\*Decision Framework\*\*: `docs/hedge-strategy-decision-framework\.md` - Systematic approach to strategy selection
+- \*\*CSV Export Guide\*\*: `docs/hedge-comparison-export-guide\.md` - Understanding all output fields and metrics
+- \*\*Technical Implementation\*\*: `docs/spx-hedging-comparison-implementation\.md` - Mathematical models and advanced features
 ```
 
 ## Architecture
