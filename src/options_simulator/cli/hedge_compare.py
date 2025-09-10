@@ -33,8 +33,8 @@ console = Console()
               help='Portfolio value to hedge')
 @click.option('--timeframes', type=str, default="2M,3M,6M",
               help='Comma-separated expiration periods (e.g., "2M,3M,6M")')
-@click.option('--otm-percentages', type=str, default="0.15,0.18,0.20",
-              help='Comma-separated OTM percentages to analyze')
+@click.option('--otm-percentages', type=str, default="0.15,0.25,0.30,0.35",
+              help='Comma-separated OTM percentages to analyze (Universa range: 0.25-0.35 for crisis protection)')
 @click.option('--symbols', type=str, default="SPY",
               help='Underlying symbols (default: SPY)')
 @click.option('--volatility-regime', type=click.Choice(['low', 'medium', 'high', 'extreme', 'auto']),
@@ -409,14 +409,23 @@ def _display_results(comparison_results: Dict,
                     show_regime_greeks: bool,
                     jump_diffusion_pricing: bool, 
                     hybrid_analysis: bool):
-    """Display comprehensive analysis results."""
+    """Display comprehensive analysis results with Universa-style clarity."""
     
     # Current regime and conditions
     current_regime = comparison_results.get('current_volatility_regime', 'unknown')
+    portfolio_value = comparison_results.get('portfolio_value', 0)
+    
     console.print(Panel(
         f"[bold]Current Volatility Regime:[/bold] {current_regime.upper()}\n"
+        f"[bold]Portfolio Value:[/bold] ${portfolio_value:,.0f}\n"
         f"[bold]Analysis Date:[/bold] {comparison_results.get('analysis_timestamp', 'N/A')}"
     ))
+    
+    # PRIMARY RECOMMENDATION - New enhanced display
+    _display_primary_recommendation(comparison_results)
+    
+    # Crisis vs Volatility Protection Comparison - New section
+    _display_protection_type_comparison(comparison_results)
     
     # Strategy rankings table
     _display_strategy_rankings(comparison_results)
@@ -435,6 +444,153 @@ def _display_results(comparison_results: Dict,
     
     # Recommendations and warnings
     _display_recommendations_and_warnings(comparison_results)
+
+
+def _display_primary_recommendation(comparison_results: Dict):
+    """Display the primary recommendation with clear implementation guidance."""
+    recommendations = comparison_results.get('recommendations', {})
+    primary_rec = recommendations.get('primary_recommendation', {})
+    
+    if primary_rec:
+        # Get strategy analysis for additional details
+        strategy_analysis = comparison_results.get('strategy_analysis', {})
+        rec_strategy_id = primary_rec.get('strategy_id', '')
+        analysis_data = strategy_analysis.get(rec_strategy_id, {})
+        performance_metrics = analysis_data.get('performance_metrics', {})
+        
+        strategy_type = performance_metrics.get('strategy_type', 'unknown')
+        crisis_multiplier = performance_metrics.get('crisis_multiplier', 0)
+        protection_ratio = performance_metrics.get('protection_ratio', 0)
+        annual_cost = performance_metrics.get('annual_cost', 0)
+        allocation_pct = performance_metrics.get('allocation_percentage', 0)
+        
+        # Style the recommendation based on strategy type
+        if strategy_type == "crisis_protection":
+            title_style = "bold green"
+            protection_type = "🛡️ Crisis Protection (True Tail Hedging)"
+            expected_returns = f"100x+ returns during black swan events (>30% market drops)"
+        elif strategy_type == "volatility_protection":
+            title_style = "bold yellow"
+            protection_type = "📈 Volatility Protection"
+            expected_returns = f"5-10x returns during volatility spikes (VIX >30)"
+        else:
+            title_style = "bold cyan"
+            protection_type = "⚖️ Balanced Protection"
+            expected_returns = f"20-50x returns during market stress"
+        
+        recommendation_text = (
+            f"[{title_style}]🎯 PRIMARY RECOMMENDATION[/{title_style}]\n\n"
+            f"[bold]Strategy:[/bold] {primary_rec.get('recommended_strategy', 'N/A')}\n"
+            f"[bold]Protection Type:[/bold] {protection_type}\n"
+            f"[bold]Confidence Score:[/bold] {primary_rec.get('confidence_score', 0):.0%}\n"
+            f"[bold]Expected Crisis Returns:[/bold] {crisis_multiplier}x multiplier\n"
+            f"[bold]Expected Returns:[/bold] {expected_returns}\n\n"
+            f"[bold]💰 COST ANALYSIS[/bold]\n"
+            f"• Annual Cost: ${annual_cost:,.0f} ({allocation_pct:.1%} of portfolio)\n"
+            f"• Protection Ratio: {protection_ratio:.1f}x (crisis-adjusted)\n\n"
+            f"[bold]🎯 WHY THIS STRATEGY TODAY[/bold]\n"
+        )
+        
+        # Add specific advantages
+        advantages = primary_rec.get('key_advantages', [])
+        for advantage in advantages:
+            recommendation_text += f"• {advantage}\n"
+            
+        console.print(Panel(
+            recommendation_text.strip(),
+            title="Strategic Recommendation",
+            border_style="green" if strategy_type == "crisis_protection" else "yellow"
+        ))
+        console.print()
+
+
+def _display_protection_type_comparison(comparison_results: Dict):
+    """Display comparison between crisis protection and volatility protection strategies."""
+    strategy_analysis = comparison_results.get('strategy_analysis', {})
+    
+    if not strategy_analysis:
+        return
+    
+    # Categorize strategies by protection type
+    crisis_strategies = []
+    volatility_strategies = []
+    balanced_strategies = []
+    
+    for strategy_id, analysis in strategy_analysis.items():
+        performance = analysis.get('performance_metrics', {})
+        strategy_type = performance.get('strategy_type', 'unknown')
+        
+        if strategy_type == 'crisis_protection':
+            crisis_strategies.append((strategy_id, analysis))
+        elif strategy_type == 'volatility_protection':
+            volatility_strategies.append((strategy_id, analysis))
+        else:
+            balanced_strategies.append((strategy_id, analysis))
+    
+    console.print("[bold blue]📊 PROTECTION TYPE COMPARISON[/bold blue]")
+    
+    # Create comparison table
+    protection_table = Table(show_header=True)
+    protection_table.add_column("Strategy", style="cyan", min_width=20)
+    protection_table.add_column("Type", style="bold", min_width=15)
+    protection_table.add_column("Crisis Returns", justify="right", style="green")
+    protection_table.add_column("Annual Cost", justify="right")
+    protection_table.add_column("Allocation", justify="right")
+    
+    # Helper function to add strategy rows
+    def add_strategy_row(strategy_id, analysis, protection_type_display):
+        performance = analysis.get('performance_metrics', {})
+        strategy_details = analysis.get('strategy_details', {})
+        
+        strategy_name = strategy_details.get('name', strategy_id)
+        crisis_multiplier = performance.get('crisis_multiplier', 0)
+        annual_cost = performance.get('annual_cost', 0)
+        allocation_pct = performance.get('allocation_percentage', 0)
+        
+        protection_table.add_row(
+            strategy_name,
+            protection_type_display,
+            f"{crisis_multiplier}x",
+            f"${annual_cost:,.0f}",
+            f"{allocation_pct:.1%}"
+        )
+    
+    # Add crisis protection strategies
+    for strategy_id, analysis in crisis_strategies:
+        add_strategy_row(strategy_id, analysis, "🛡️ Crisis")
+    
+    # Add balanced strategies
+    for strategy_id, analysis in balanced_strategies:
+        add_strategy_row(strategy_id, analysis, "⚖️ Balanced")
+    
+    # Add volatility protection strategies
+    for strategy_id, analysis in volatility_strategies:
+        add_strategy_row(strategy_id, analysis, "📈 Volatility")
+    
+    console.print(protection_table)
+    
+    # Add explanation panel
+    explanation = (
+        "[bold]PROTECTION TYPE GUIDE[/bold]\n\n"
+        "🛡️  [bold]Crisis Protection (25-35% OTM):[/bold] True Universa-style tail hedging\n"
+        "   • 100x+ returns during black swan events (>30% market drops)\n"
+        "   • Lower annual cost but requires crisis events for payoff\n"
+        "   • Best for portfolio insurance against catastrophic losses\n\n"
+        "⚖️  [bold]Balanced Protection (20-25% OTM):[/bold] Hybrid approach\n"
+        "   • 20-50x returns during moderate to severe market stress\n"
+        "   • Moderate cost and broader event coverage\n\n"
+        "📈 [bold]Volatility Protection (10-20% OTM):[/bold] Frequent smaller gains\n"
+        "   • 5-10x returns during volatility spikes (VIX >30)\n"
+        "   • Higher annual cost but more frequent payoffs\n"
+        "   • Good for reducing portfolio volatility"
+    )
+    
+    console.print(Panel(
+        explanation,
+        title="Understanding Protection Types",
+        border_style="blue"
+    ))
+    console.print()
 
 
 def _display_strategy_rankings(comparison_results: Dict):

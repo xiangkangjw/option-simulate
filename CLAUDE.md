@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Python CLI tool for simulating Universa-style tail hedging strategies using out-of-the-money put options. The application focuses on portfolio protection against market crashes and black swan events through systematic put option purchases.
 
+- Important! Strategy follows Universa Investments principles for tail risk hedging, which is deep out of the money. The goal is not to protect small market adjustment, but to take advantage of black swan events, and provide insurance like protection to our portfolio
+
 ## Rules
 
 ## Rules
@@ -116,6 +118,7 @@ options-sim hedge-compare --portfolio-value 100000 --timeframes "3M,6M" \
 ```
 
 \*\*Key Features:\*\*
+
 - \*\*Volatility regime analysis\*\*: Adjusts pricing based on current VIX environment
 - \*\*Dynamic exit strategies\*\*: Models profit-taking opportunities during black swan events
 - \*\*Jump-diffusion pricing\*\*: More accurate tail risk pricing vs Black-Scholes
@@ -123,11 +126,13 @@ options-sim hedge-compare --portfolio-value 100000 --timeframes "3M,6M" \
 - \*\*Export capabilities\*\*: CSV format for further analysis
 
 \*\*Documentation Structure:\*\*
+
 - \*\*Quick Start\*\*: `docs/hedge-compare-quick-start\.md` - Get results in 5 minutes
 - \*\*User Guide\*\*: `docs/hedge-compare-user-guide\.md` - Complete educational guide for CFA L1\+ users
 - \*\*Decision Framework\*\*: `docs/hedge-strategy-decision-framework\.md` - Systematic approach to strategy selection
 - \*\*CSV Export Guide\*\*: `docs/hedge-comparison-export-guide\.md` - Understanding all output fields and metrics
 - \*\*Technical Implementation\*\*: `docs/spx-hedging-comparison-implementation\.md` - Mathematical models and advanced features
+
 ```
 
 ## Architecture
@@ -181,4 +186,4 @@ Copy `.env.example` to `.env` and configure:
 - Yahoo Finance is the primary free data source
 - Rich library provides terminal UI with tables and progress bars
 - Pydantic handles configuration validation and settings management
-- Strategy follows Universa Investments principles for tail risk hedging
+```

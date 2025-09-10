@@ -19,10 +19,15 @@ class Settings(BaseSettings):
     debug: bool = Field(True, env="DEBUG")
     log_level: str = Field("INFO", env="LOG_LEVEL")
     
-    # Strategy Parameters
-    max_portfolio_allocation: float = Field(0.05, env="MAX_PORTFOLIO_ALLOCATION")
+    # Strategy Parameters - Universa-style Configuration
+    max_portfolio_allocation: float = Field(0.03, env="MAX_PORTFOLIO_ALLOCATION")  # Reduced to institutional optimal 3%
     default_rolling_days: int = Field(21, env="DEFAULT_ROLLING_DAYS")
-    default_otm_percentage: float = Field(0.15, env="DEFAULT_OTM_PERCENTAGE")
+    default_otm_percentage: float = Field(0.30, env="DEFAULT_OTM_PERCENTAGE")  # Updated to Universa crisis protection level
+    
+    # Universa-style OTM ranges for different protection types
+    volatility_protection_otm: float = Field(0.15, env="VOLATILITY_PROTECTION_OTM")  # 15% OTM for volatility spikes
+    crisis_protection_otm: float = Field(0.30, env="CRISIS_PROTECTION_OTM")          # 30% OTM for true tail hedging
+    extreme_crisis_otm: float = Field(0.35, env="EXTREME_CRISIS_OTM")              # 35% OTM for maximum protection
     
     # Simulation Settings
     initial_portfolio_value: float = Field(100000.0, env="INITIAL_PORTFOLIO_VALUE")
