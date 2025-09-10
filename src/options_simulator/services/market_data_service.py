@@ -94,7 +94,7 @@ class MarketDataService(EnhancedMarketDataService):
         # Check cache first (5-minute TTL for real-time data)
         if self.cache:
             cached = self.cache.get(cache_key)
-            if cached:
+            if cached is not None:
                 logger.debug(f"Using cached market conditions for {symbol}")
                 return cached
         
@@ -236,7 +236,7 @@ class MarketDataService(EnhancedMarketDataService):
         # Check cache with longer TTL for historical data (1 day)
         if self.cache:
             cached = self.cache.get(cache_key)
-            if cached:
+            if cached is not None:
                 logger.debug(f"Using cached historical data for {symbols}")
                 return cached
         
@@ -269,7 +269,7 @@ class MarketDataService(EnhancedMarketDataService):
                     logger.warning(f"Failed to fetch historical data for {symbol}: {e}")
                     continue
             
-            if not historical_data:
+            if len(historical_data) == 0:
                 logger.warning("No historical data fetched, using simulated data")
                 return self._get_simulated_historical_data(start_date, end_date)
             
@@ -277,7 +277,7 @@ class MarketDataService(EnhancedMarketDataService):
             df = pd.DataFrame(historical_data)
             
             # Fill missing data with forward fill, then backward fill
-            df = df.fillna(method='ffill').fillna(method='bfill')
+            df = df.ffill().bfill()
             
             # Cache the result
             if self.cache:

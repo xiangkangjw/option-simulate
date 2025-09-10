@@ -104,7 +104,7 @@ class YahooFinanceProvider(DataProvider):
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                if 'chart' in data and data['chart']['result']:
+                if 'chart' in data and len(data['chart']['result']) > 0:
                     result = data['chart']['result'][0]
                     if 'meta' in result and 'regularMarketPrice' in result['meta']:
                         price = float(result['meta']['regularMarketPrice'])
@@ -168,7 +168,7 @@ class YahooFinanceProvider(DataProvider):
             response = requests.get(url, params=params, headers=headers, timeout=15)
             if response.status_code == 200:
                 data = response.json()
-                if 'chart' in data and data['chart']['result']:
+                if 'chart' in data and len(data['chart']['result']) > 0:
                     result = data['chart']['result'][0]
                     
                     # Extract timestamps and price data
