@@ -16,7 +16,7 @@ import logging
 from ..models.jump_diffusion import JumpDiffusionPricer, JumpDiffusionParameters
 from .volatility_regime import VolatilityRegimeAnalyzer, VolatilityRegime, RegimeAnalysis
 from .exit_strategy import ExitStrategyManager, ExitOpportunity, ExitTrigger, ExitTriggerType
-from ..config import EnhancedHedgingConfig
+from ..config import EnhancedHedgingConfig, settings
 
 logger = logging.getLogger(__name__)
 
@@ -288,8 +288,9 @@ class HedgeComparisonEngine:
                                historical_data: Optional[pd.DataFrame]) -> Dict[str, Any]:
         """Analyze a single hedging strategy comprehensively."""
         
-        # Basic strategy parameters
-        hedge_allocation = portfolio_value * 0.05  # 5% default allocation
+        # Basic strategy parameters - use configured max allocation for each strategy
+        target_allocation_percentage = settings.max_portfolio_allocation
+        hedge_allocation = portfolio_value * target_allocation_percentage
         current_spot = current_conditions.get("spy_price", 400)  # Default SPY price
         strike_price = current_spot * (1 - strategy.otm_percentage)
         time_to_expiry = strategy.expiration_months / 12.0
@@ -325,16 +326,28 @@ class HedgeComparisonEngine:
             option_type="put"
         )
         
+        # Calculate contracts that can be purchased with target allocation
         contracts_needed = hedge_allocation / (jd_price * 100)  # 100 shares per contract
-        annual_cost = jd_price * contracts_needed * 100 * (12 / strategy.expiration_months)
+        
+        # Calculate the actual annual cost as target percentage of portfolio
+        # This ensures all strategies show consistent allocation percentage
+        rolls_per_year = 12 / strategy.expiration_months
+        single_period_cost = jd_price * contracts_needed * 100
+        
+        # The annual cost should be the target allocation percentage, regardless of strategy
+        # This reflects that each strategy gets the same budget allocation
+        annual_cost = portfolio_value * target_allocation_percentage
         
         analysis["pricing_analysis"] = {
             "jump_diffusion_price": jd_price,
             "black_scholes_price": bs_price,
             "jump_risk_premium": (jd_price - bs_price) / bs_price if bs_price > 0 else 0,
             "contracts_needed": contracts_needed,
+            "single_period_cost": single_period_cost,
+            "rolls_per_year": rolls_per_year,
             "annual_cost": annual_cost,
-            "cost_as_percentage": annual_cost / portfolio_value
+            "cost_as_percentage": target_allocation_percentage,  # This should now be consistent across strategies
+            "cost_efficiency": contracts_needed  # Number of contracts achievable with target allocation
         }
         
         # Greeks analysis
